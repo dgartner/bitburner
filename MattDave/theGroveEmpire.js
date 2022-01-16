@@ -1,7 +1,7 @@
 const home = "home";
-const hackerScript = "hack.js";
-const weakenScript = "weaken.js";
-const growScript = "grow.js";
+const HACKER_SCRIPT = "hack.js";
+const WEAKEN_SCRIPT = "weaken.js";
+const GROW_SCRIPT = "grow.js";
 
 const EXE_BRUTE_SSH = "BruteSSH.exe";
 const EXE_FTP_CRACK = "FTPCrack.exe";
@@ -18,9 +18,10 @@ const LAST_NAMES = ["Smithson", "Grover", "Stenn", "Brakken", "Sinner", "Farce",
 const FIRST_NAME_LENGTH = FIRST_NAMES.length;
 const LAST_NAME_LENGTH = LAST_NAMES.length;
 
-const AGENT_COST = 1.75;
+const AGENT_COST = 1.8;
 
 const ARMY_FIELD_REPORT_PORT = 1;
+const AGENT_DROPPOINT = 2;
 
 class Agent
 {
@@ -37,6 +38,21 @@ class Agent
         this.status = status;
     }
 
+    startOperation(readyTime)
+    {
+        this.readyTime = readyTime;
+    }
+
+    getReadyTime()
+    {
+        return this.readyTime;
+    }
+
+    readyUp()
+    {
+        this.status = AGENT_READY;
+    }
+
     setStatus(status)
     {
         this.status = status;
@@ -51,14 +67,19 @@ class Agent
     {
         return this.name;
     }
+
+    getStatus()
+    {
+        return this.status;
+    }
 }
 
 async function buildHomeworlInfrastructure(ns, homeworld)
 {
         // Prepare with infernal arms
-        await ns.scp(hackerScript, value);
-        await ns.scp(weakenScript, value);
-        await ns.scp(growScript, value);
+        await ns.scp(HACKER_SCRIPT, homeworld);
+        await ns.scp(WEAKEN_SCRIPT, homeworld);
+        await ns.scp(GROW_SCRIPT, homeworld);
 }
 
 class Army
@@ -68,8 +89,18 @@ class Army
     {
         this.ns = ns;
 
-        this.agentCount = 0;
         this.agents = agents;
+        this.operationCount = 0;
+    }
+
+    getAgents()
+    {
+        return this.agents;
+    }
+
+    getNextOperationId()
+    {
+        return this.operationCount++;
     }
 
     getFieldReport()
@@ -138,27 +169,19 @@ class Army
         return reportSummary;
     }
 
+    // Discontinued in favor of filters
     getAvailableAgents()
     {
         let availableAgents = new Array();
 
-        let rawData = this.ns.peek(ARMY_FIELD_REPORT_PORT);
-        let reportData = JSON.parse(rawData);
-
-        let reportKeys = Object.keys(reportData);
-        for (var i = 0; i < reportKeys.length; i++)
+        for (var i = 0; i < this.agents.length; i++)
         {
-            let reportItem = reportData[i];
+            let agent = this.agents[0];
 
-            let name = reportItem['name'];
-            let homeworld = reportItem['homeworld'];
-            let status = reportItem['status'];
+            let agentStatus = agent.getStatus();
 
-            if (status == AGENT_READY)
-            {
-                let agent = new Agent(name, homeworld, status);
+            if (agentStatus == AGENT_READY)
                 availableAgents.push(agent);
-            }
         }
 
         this.ns.tprint("There are " + availableAgents.length + " agents at the ready.");
@@ -167,7 +190,24 @@ class Army
     }
 }
 
+class Operation
+{
+    constructor(target, action)
+    {
+        this.target = target;
+        this.action = action;
+    }
 
+    getTarget()
+    {
+        return this.target;
+    }
+
+    getAction()
+    {
+        return this.action;
+    }
+}
 
 async function raiseArmy(ns, realms)
 {
@@ -189,12 +229,15 @@ async function raiseArmy(ns, realms)
         let availableOverhead = maxOverhead - currentOverhead;
         
         let homeworldCapacity = Math.floor(availableOverhead / AGENT_COST);
+        ns.tprint("\t\tMaximum Overhead: " + maxOverhead);
+        ns.tprint("\t\tCurrent Overhead: " + currentOverhead);
+        ns.tprint("\t\tAvailable Overhread: " + availableOverhead);
         ns.tprint("\t\tHomeworld capacity: " + homeworldCapacity);
 
         // let homeworld = new Homeworld(ns, homeworldName, homeworldId, homeworldCapacity);
 
         ns.tprint("\t\tBuilding infrastructure...");
-        buildHomeworlInfrastructure(ns, homeworldName);
+        await buildHomeworlInfrastructure(ns, homeworldName);
 
         ns.tprint("\t\tCommissioning agents...");
         let agents = commisionAgents(ns, homeworldName, homeworldCapacity);
@@ -214,11 +257,11 @@ async function raiseArmy(ns, realms)
         ns.tprint("\Homeworld recruitment complete.");
     }
 
-    ns.tprint("\nSubmitting initial field report...");
-    let fieldReport = JSON.stringify(agentList);
-
-    await ns.clearPort(ARMY_FIELD_REPORT_PORT);
-    await ns.writePort(ARMY_FIELD_REPORT_PORT, fieldReport);
+    // TODO No longer using field reports.
+    // ns.tprint("\nSubmitting initial field report...");
+    // let fieldReport = JSON.stringify(agentList);
+    // await ns.clearPort(ARMY_FIELD_REPORT_PORT);
+    // await ns.writePort(ARMY_FIELD_REPORT_PORT, fieldReport);
 
     let army = new Army(ns, agentList);
     return army;
@@ -226,18 +269,15 @@ async function raiseArmy(ns, realms)
 
 function commisionAgents(ns, homeworld, count)
 {
-    ns.tprint("Enter");
     let agents = Array(count);
     for (var i = 0; i < count; i++)
     {
-        ns.tprint("loop: " + i);
         let agentName = findAgent();
 
-        let agent = new Agent(agentName, homeworld);
+        let agent = new Agent(agentName, homeworld, AGENT_READY, ns.getTimeSinceLastAug());
         agents[i] = agent;
     }
 
-    ns.tprint("Exit");
     return agents;
 }
 
@@ -272,55 +312,131 @@ export async function main(ns)
     if(protectedRealm)
         myRealms.push(protectedRealm);
 
-    ns.tprint("Preparing my legions");
+    ns.tprint("Raising an army");
     let army = await raiseArmy(ns, myRealms);
 
-    army.getFieldReport();
+    ns.tprint("Army size: " + army.getAgents().length);
 
-    let targetList = runScan(ns, myRealms, depth);
-
-    let availableAgents = army.getAvailableAgents();
-}
-
-function mainLoop(ns, targetSet, army)
-{
-    let availableAgents = army.getAvailableAgents();
+    let targetSet = runScan(ns, myRealms, depth);
     let targetList = setToList(targetSet);
 
-    for (var i = 0; i < targetList.length; i++)
+    ns.tprint("Test main loop");
+    await mainLoop(ns, targetList, army);
+}
+
+// TODO VERY TODO
+function determineNextOps(targetList)
+{
+    let ops = new Operation("n00dles", AGENT_WEAK);
+    return ops;
+}
+
+function agentReadyFilter(agent)
+{
+    return agent.getReadyTime() <= this;
+}
+
+function agentNotReadyFilter(agent)
+{
+    return agent.getReadyTime() > this;
+}
+
+function isAgentReady(agent, currentTime)
+{
+    return agent.getReadyTime() >= currentTime;
+}
+
+function agentSort(left, right)
+{
+    return left.getReadyTime() - right.getReadyTime();
+}
+
+async function mainLoop(ns, targetList, army)
+{
+    var loopCount = 0;
+
+    while(true)
     {
-        let targetName = targetList[i];
-        ns.tprint("Processing target: " + targetName);
+        ns.tprint("Planning...");
+        let currentTime = ns.getTimeSinceLastAug();
+
+        ns.tprint("\tCurrent Time: " + currentTime);
         
-        // Reset position if we're at the end
-        if (i == targetList.length)
-            i = 0;
-
-
-        // TODO Have to update this to use the port comms for how long before agent is ready again
-        let action = determineAction(targetName);
-
-        // Call exec
-        // Read port to get time
-        // Set timer until agent is available
-
-
-
-        if (action != AGENT_READY)
+        let agents = army.getAgents();
+        ns.tprint("\tTotal Agents: " + agents.length);
+        for (var i = 0; i < agents.length; i++)
         {
-            let agent = availableAgents.shift();
-
-            // TODO Send agent off.
-            // TODO Update Status
-            // TODO Add logic to put agent back at the ready when their job is complete
-
-            // TODO Can I run the same script with different parameter names?
-                // Looks like only with different numbers of parameters
+            ns.tprint("Agent time: " + agents[i].getReadyTime());
         }
+
+        let availableAgents = agents.filter(agentReadyFilter, currentTime);
+        ns.tprint("Available Agents: " + availableAgents.length);
+
+        for(var i = 0; i < availableAgents.length; i++)
+        {
+            let agent = availableAgents[i];
         
+            ns.tprint("Agent start");
+            let operation = determineNextOps(targetList);
+
+            let action = operation.getAction();
+            let target = operation.getTarget();
+
+            let operationId = army.getNextOperationId();
+
+            let agentHomeworld = agent.getHomeworld();
+
+            let scriptName = "theFuck.js";
+            switch(action)
+            {
+                case AGENT_HACK:
+                    scriptName = HACKER_SCRIPT;
+                break;
+                case AGENT_GROW:
+                    scriptName = GROW_SCRIPT;
+                break;
+                case AGENT_WEAK:
+                    scriptName = WEAKEN_SCRIPT;
+                break;
+                default: 
+                    ns.tprint("The fuck?");
+            }
+
+            ns.tprint("Operation Details");
+            ns.tprint("\tAgent: " + agent.getName() + " (" + agent.getHomeworld() + ")");
+            ns.tprint("\tAction: " + action + " (" + scriptName + ")");
+            ns.tprint("\tTarget: " + target)
+
+            agent.setStatus(action);
+            ns.exec(scriptName, agentHomeworld, 1, target, AGENT_DROPPOINT, operationId);
+            ns.tprint("Executed!");
+
+            await ns.sleep(100);
+            let operationTime = await ns.readPort(AGENT_DROPPOINT);
+            ns.tprint("\tDuration: " + operationTime);
+            agent.startOperation(currentTime + operationTime);
+        }
+
+        ns.tprint("Iteration " + loopCount++ + " complete");
+        
+        // TODO - Remove DEBUG
+        if (loopCount > 5)
+            break;
+
+        await ns.sleep(1 * 1000);
     }
 
-    let plannedActions = processTargets(ns, targetList);
+    ns.tprint("Current time" + ns.getTimeSinceLastAug());
+    let agents = army.getAgents();
+    ns.tprint("\tTotal Agents: " + agents.length);
+    for (var i = 0; i < agents.length; i++)
+    {
+        ns.tprint("Agent time: " + agents[i].getReadyTime());
+    }
+    
+    let availableAgents = agents.filter(agentReadyFilter, ns.getTimeSinceLastAug());
+    ns.tprint("Available Agents: " + availableAgents.length);
+
 }
 
 function portCheck(ns, server)
@@ -370,6 +486,7 @@ function determineAction(ns, target)
 function setToList(mySet)
 {
     let returnArray = new Array();
+    let iter = mySet.values();
 
     while(true)
     {
@@ -385,35 +502,6 @@ function setToList(mySet)
 
     return returnArray;
 }
-
-async function processTargets(ns, targetList)
-{
-    let iter = targetList.values();
-
-    
-
-    
-}
-
-class Target
-{
-    constructor(name, action)
-    {
-        this.name = name;
-        this.action = action;
-    }
-
-    getName()
-    {
-        return this.name;
-    }
-
-    getAction()
-    {
-        return this.action;
-    }
-}
-
 
 function runScan(ns, myRealms, depth)
 {
@@ -497,10 +585,4 @@ function findTargets(ns, startingPoints, myRealms)
     }
 
     return targets;
-}
-
-
-function sleep(ms) 
-{
-    return new Promise(resolve => setTimeout(resolve, ms));
 }

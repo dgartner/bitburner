@@ -45,7 +45,7 @@ async function makeItHappen(ns, target)
 	var secPer = ns.getServerSecurityLevel(target) / level;
 
 	var minMoney = 500 * 1000000;
-	var maxHackNeeded = 300;
+	var maxHackNeeded = 1000;
 
 	if(maxMoney >= minMoney && hackLevel <= maxHackNeeded)
 	{

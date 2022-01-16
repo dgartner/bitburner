@@ -8,6 +8,7 @@ export async function main(ns) {
 
 	ns.disableLog("ALL");
 
+	var hackthreads = new HackThreads();
 
 	while(true) {
 		if(!ns.isRunning("weaken.js", host, target, target))
@@ -19,7 +20,7 @@ export async function main(ns) {
 
 			var weakenThreads = 0;
 			var remainingRam = maxRam;
-			var hackThreads = Math.min(getHackThreads(ns, target), Math.floor(remainingRam / hackRam));
+			var hackThreads = Math.min(await hackthreads.getHackThreads(ns, target), Math.floor(remainingRam / hackRam));
 			remainingRam = remainingRam - (hackThreads * hackRam);
 			var growThreads = Math.floor(remainingRam / growRam);
 
@@ -30,6 +31,7 @@ export async function main(ns) {
 				weakenThreads++;
 				growThreads--;
 				newSec = ns.getServerSecurityLevel(target) + ns.growthAnalyzeSecurity(growThreads);
+				await ns.sleep(1);
 			}
 
 			ns.print(sprintf("W:%d  H:%d  G:%d", weakenThreads, hackThreads, growThreads));
@@ -51,54 +53,38 @@ export async function main(ns) {
 	}
 }
 
-/** @param {NS} ns **/
-function areScriptsRunning(ns, target, host)
-{
-}
+class HackThreads {
+	constructor() { this.hackMin = 0.7};
 
-// /** @param {NS} ns **/
-// function getWeakenThreads(ns, target) {
-// 	var minSec = ns.getServerMinSecurityLevel(target);
-// 	var curSec = ns.getServerSecurityLevel(target);
+	async getHackThreads(ns, target) {
+		var maxMoney = ns.getServerMaxMoney(target);
+		var hackThreshold = 0.85;
+		var curMoney = ns.getServerMoneyAvailable(target);
+		var hackThreads = 0;
+		var percentfull = (curMoney / maxMoney);
 
-// 	ns.print("MinSec: " + minSec + " -- CurSec: " + curSec);
-// 	var weakenThreads = 0;
-// 	while(curSec - ns.weakenAnalyze(weakenThreads) > minSec)
-// 	{
-// 		weakenThreads++;
-// 	}
-// 	return weakenThreads;
-// }
-
-var hackMin = 0.70;
-/** @param {NS} ns **/
-function getHackThreads(ns, target) {
-	var maxMoney = ns.getServerMaxMoney(target);
-	var hackThreshold = 0.85;
-	var curMoney = ns.getServerMoneyAvailable(target);
-	var hackThreads = 0;
-	var percentfull = (curMoney / maxMoney);
-
-	if(curMoney > (maxMoney * hackMin)) {
-		if(percentfull < 1.0) {
-			hackMin = Math.min(hackMin+0.01, hackThreshold);
+		if(curMoney > (maxMoney * this.hackMin)) {
+			if(percentfull < 1.0) {
+				this.hackMin = Math.min(this.hackMin+0.01, hackThreshold);
+			}
+			else {
+				this.hackMin -= 0.01;
+			}
 		}
-		else {
-			hackMin -= 0.01;
-		}
-	}
-	ns.print(hackMin);
+		ns.print(this.hackMin);
 
-	var outString = ns.sprintf('%s has %d -- %2.2f%% of max', target, curMoney, percentfull * 100);
-	ns.print(outString);
-	//ns.print(target + " has " + Math.floor(curMoney) + ". " + Math.floor(percentfull) + "% of max");
-	if(curMoney > maxMoney * hackThreshold)
-	{
-		var targetPercent = percentfull - hackMin;
-		while(ns.hackAnalyze(target) * hackThreads < targetPercent)
+		var outString = ns.sprintf('%s has %d -- %2.2f%% of max', target, curMoney, percentfull * 100);
+		ns.print(outString);
+		//ns.print(target + " has " + Math.floor(curMoney) + ". " + Math.floor(percentfull) + "% of max");
+		if(curMoney > maxMoney * hackThreshold)
 		{
-			hackThreads++;
+			var targetPercent = percentfull - this.hackMin;
+			while(ns.hackAnalyze(target) * hackThreads < targetPercent)
+			{
+				hackThreads++;
+				await ns.sleep(1);
+			}
 		}
+		return hackThreads;	
 	}
-	return hackThreads;	
 }

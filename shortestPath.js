@@ -7,10 +7,13 @@ class Crawler {
 		this.accessedTargets = [this.hostname];
 		this.recurseStack = [];
 		this.pathsToTarget = [];
+		this.targetServer = ns.args[0];
 	}
 
 	async run() {
+		this.ns.tprint("Looking for " + this.targetServer);
 		await this.recursiveScan(this.hostname);
+		this.finish();
 	}
 
 	/** @param {NS} ns **/
@@ -24,30 +27,42 @@ class Crawler {
 		for(let i = 0; i < subTargets.length; i++)
 		{
 			var sTarget = subTargets[i];
-			if(this.accessedTargets.includes(sTarget)){
+			if(this.recurseStack.includes(sTarget)){
 				continue;
 			}
 			else{
 				this.accessedTargets.push(sTarget);
+				if(sTarget == this.targetServer)
+				{
+					await this.doAction(sTarget);
+					continue;
+				}
 				await this.recursiveScan(sTarget);
 			}
-			await this.ns.sleep(1);
 		}
 		this.recurseStack.pop();
 		this.recurseDepth--;
 	}
 
-	getAllRootAccess()
-	{
-		var rootAccess = []
-		for(let i = 1; i < this.accessedTargets.length; i++)
+	async doAction(target) {
+		this.ns.tprint(this.recurseStack);
+		this.pathsToTarget.push(this.recurseStack);
+		this.ns.tprint(this.pathsToTarget);
+		await this.ns.sleep(1);
+	}
+
+	finish() {
+		var minPathLength = 10000;
+		var minPathIndex = 0;
+		for( var i = 0; i < this.pathsToTarget.length; i++)
 		{
-			if(this.ns.hasRootAccess(this.accessedTargets[i]) && this.ns.getServerMaxMoney(this.accessedTargets[i]) > 0)
+			if(this.pathsToTarget[i].length < minPathLength)
 			{
-				rootAccess.push(this.accessedTargets[i]);
+				minPathLength = this.pathsToTarget[i].length;
+				minPathIndex = i;
 			}
 		}
-		return rootAccess;
+		this.ns.tprint(this.pathsToTarget[minPathIndex]);
 	}
 }
 
@@ -55,13 +70,4 @@ class Crawler {
 export async function main(ns) {
 	var crawler = new Crawler(ns);
 	await crawler.run();
-	var targets = crawler.getAllRootAccess();
-	ns.tprint(targets);
-	var maxRam = ns.getServerMaxRam(ns.getHostname());// - ns.getScriptRam("phase2.js");
-	var maxTargets = Math.min(64, targets.length);
-	for(var i = 0; i < targets.length; i++)
-	{
-		ns.tprint("Smarthacking " + targets[i]);
-		ns.exec("smarthack.js", ns.getHostname(),  1, targets[i], maxRam/maxTargets);
-	}
 }

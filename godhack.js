@@ -1,10 +1,10 @@
-import { Crawler } from "./classes/crawler";
+import { Crawler } from "./crawler";
 
 /** @param {NS} ns **/
 export async function main(ns) {
-    let crawler = Crawler(ns);
-    let tm = TaskManager(ns);
-    let analyzer = Analyzer(ns, tm);
+    let crawler = new Crawler(ns);
+    let tm = new TaskManager(ns);
+    let analyzer = new Analyzer(ns, tm);
     await crawler.run();
     crawler.nukeAll();
 
@@ -25,8 +25,6 @@ export async function main(ns) {
     }
 }
 
-
-
 class Analyzer 
 {
     constructor(ns, tm) 
@@ -40,37 +38,46 @@ class Analyzer
     weaken(server)
     {
         let scriptName = "weaken.js";
-        let endTime = ns.getWeakenTime(server.hostname);
+        let endTime = this.ns.getWeakenTime(server.hostname);
         let threads = this.getWeakenThreads(server);
-        threads = Math.min(getMaxThreads(scriptName), threads);
-        let secEffect = 0 - ns.weakenAnalyze(threads, this.cores);
+        threads = Math.min(this.getMaxThreads(scriptName), threads);
+        let secEffect = 0 - this.ns.weakenAnalyze(threads, this.cores);
         let moneyMultiplier = 1;
-        this.ns.exec(scriptName, ns.getHostname(), threads);
-        this.tm.push(new Task(server.hostname, scriptName, secEffect, moneyMultiplier, endTime, threads))
+        if(threads > 0)
+        {
+            this.ns.exec(scriptName, this.ns.getHostname(), threads);
+            this.tm.push(new Task(server.hostname, scriptName, secEffect, moneyMultiplier, endTime, threads))
+        }
     }
 
     grow(server)
     {
         let scriptName = "grow.js";
-        let endTime = ns.getGrowTime(server.hostname);
+        let endTime = this.ns.getGrowTime(server.hostname);
         let threads = this.getGrowThreads(server);
-        threads = Math.min(getMaxThreads(scriptName), threads);
-        let secEffect = ns.growthAnalyzeSecurity(threads);
+        threads = Math.min(this.getMaxThreads(scriptName), threads);
+        let secEffect = this.ns.growthAnalyzeSecurity(threads);
         let moneyMultiplier = 1; //use HackingFormulas.growPercent(server.hostname, threads, ns.getPlayer(), this.cores);
-        this.ns.exec(scriptName, ns.getHostname(), threads);
-        this.tm.push(new Task(server.hostname, scriptName, secEffect, moneyMultiplier, endTime, threads))
+        if(threads > 0)
+        {
+            this.ns.exec(scriptName, this.ns.getHostname(), threads);
+            this.tm.push(new Task(server.hostname, scriptName, secEffect, moneyMultiplier, endTime, threads))
+        }
     }
 
     hack(server)
     {
         let scriptName = "hack.js";
-        let endTime = ns.getHackTime(server);
+        let endTime = this.ns.getHackTime(server.hostname);
         let threads = this.getHackThreads(server);
-        threads = Math.min(getMaxThreads(scriptName), threads);
-        let secEffect = ns.hackAnalyzeSecurity(threads);
-        let moneyMultiplier = ns.hackAnalyze(server.hostname) * threads * ns.hackAnalyzeChance(server.hostname);
-        this.ns.exec(scriptName, ns.getHostname(), threads);
-        this.tm.push(new Task(server.hostname, scriptName, secEffect, moneyMultiplier, endTime, threads))
+        threads = Math.min(this.getMaxThreads(scriptName), threads);
+        let secEffect = this.ns.hackAnalyzeSecurity(threads);
+        let moneyMultiplier = this.ns.hackAnalyze(server.hostname) * threads * this.ns.hackAnalyzeChance(server.hostname);
+        if(threads > 0)
+        {
+            this.ns.exec(scriptName, this.ns.getHostname(), threads);
+            this.tm.push(new Task(server.hostname, scriptName, secEffect, moneyMultiplier, endTime, threads))
+        }
     }
 
     getMaxThreads(script)
@@ -83,17 +90,17 @@ class Analyzer
 
     getWeakenThreads(server) 
     {
-        let endTime = ns.getWeakenTime(server.hostname);
+        let endTime = this.ns.getWeakenTime(server.hostname);
         let secLevel = this.getSecLevelAtTime(server, endTime);
         let secDelta = secLevel - server.minDifficulty;
-        let stWeakenEffect = ns.weakenAnalyze(1, this.cores);
+        let stWeakenEffect = this.ns.weakenAnalyze(1, this.cores);
         return Math.floor(secDelta / stWeakenEffect);
     }
 
     getGrowThreads(server)
     {
         let growThreads = 0;
-        let endTime = ns.getGrowTime(server.hostname);
+        let endTime = this.ns.getGrowTime(server.hostname);
         let effectiveMoneyPercentage = this.getMoneyPercentAtTime(server.hostname, endTime);
         if(effectiveMoneyPercentage < 1)
         {
@@ -106,7 +113,7 @@ class Analyzer
     getHackThreads(server)
     {
         let targetHackPercentage = 0.25;
-        let endTime = ns.getHackTime(server.hostname);
+        let endTime = this.ns.getHackTime(server.hostname);
         let effectiveMoneyPercentage = this.getMoneyPercentAtTime(server.hostname, endTime);
         let hackThreads = 0;
         if(effectiveMoneyPercentage > 0.98)
@@ -162,13 +169,17 @@ class Analyzer
     }
 }
 
+function sortByEndTime(a, b)
+{
+    return b - a;
+}
 
 class TaskManager 
 {
     constructor(ns) 
     {
         this.ns = ns;
-        #this.tasklist = [];
+        this.tasklist = new Array();
     }
 
     push(task)
@@ -178,7 +189,7 @@ class TaskManager
 
     getTasks()
     {
-        this.tasklist.sort((a,b) => (a.endTime > b.endTime) ? 1 : -1);
+        this.tasklist.sort(sortByEndTime);
         for(var i = 0; i < this.tasklist.length; i++)
         {
             let task = this.tasklist[i];
@@ -200,7 +211,7 @@ class TaskManager
 class Task{
     constructor(serverName, script, secEffect, moneyMultiplier, endTime, threads)
     {
-        this.serverName = server;
+        this.serverName = serverName;
         this.script = script;
         this.secEffect = secEffect;
         this.moneyMultiplier = moneyMultiplier;

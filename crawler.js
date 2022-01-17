@@ -1,10 +1,11 @@
-class Crawler {
+export class Crawler {
 	/** @param {NS} ns **/
 	constructor(ns) {
 		this.ns = ns;
 		this.recurseDepth = 0;
 		this.hostname = this.ns.getHostname();
-		this.accessedTargets = [this.hostname];
+		this.serverNames = [this.hostname];
+		this.servers = [ns.getServer(this.hostname)];
 	}
 
 	async run() {
@@ -12,72 +13,85 @@ class Crawler {
 	}
 
 	/** @param {NS} ns **/
-	async recursiveScan(target)
+	async recursiveScan(server)
 	{
 		this.recurseDepth++;
-		var subTargets = this.ns.scan(target);
+		var subTargets = this.ns.scan(server.hostname);
 		//ns.tprint("Scanning from: " + target);
 		
 		for(let i = 0; i < subTargets.length; i++)
 		{
 			var sTarget = subTargets[i];
-			if(this.accessedTargets.includes(sTarget)){
+			var server = this.ns.getServer(sTarget);
+			if(this.serverNames.includes(sTarget))
+			{
 				continue;
 			}
 			else{
-				this.accessedTargets.push(sTarget)
-				await this.doAction(sTarget);
-				await this.recursiveScan(sTarget);
+				this.servers.push(server);
+				this.serverNames.push(sTarget);
+				await this.recursiveScan(server);
 			}
 		}
 		this.recurseDepth--;
 	}
 
-	async doAction(target) {
-		if(target == this.hostname)
-		{
-			return;
-		}
-		if(this.nukeTarget(target))
-		{
-			this.ns.exec("hack.js", this.hostname, 1, target);
-		}
-		await this.ns.sleep(1);
+	nukeAll()
+	{
+		this.servers.forEach(server => this.nukeServer(server));
 	}
 
-	nukeTarget(target) {
+	nukeServer(server) {
 		var openedPorts = 0;
 		if (this.ns.fileExists("BruteSSH.exe", "home")) {
-			this.ns.brutessh(target);
+			this.ns.brutessh(server.hostname);
 			openedPorts++;
 		}
 		if (this.ns.fileExists("FTPCrack.exe", "home")) {
-			this.ns.ftpcrack(target);
+			this.ns.ftpcrack(server.hostname);
 			openedPorts++;
 		}
 		if (this.ns.fileExists("relaySMTP.exe", "home")) {
-			this.ns.relaysmtp(target);
+			this.ns.relaysmtp(server.hostname);
 			openedPorts++;
 		}
 		if (this.ns.fileExists("HTTPWorm.exe", "home")) {
-			this.ns.httpworm(target);
+			this.ns.httpworm(server.hostname);
 			openedPorts++;
 		}
 		if (this.ns.fileExists("SQLInject.exe", "home")) {
-			this.ns.sqlinject(target);
+			this.ns.sqlinject(server.hostname);
 			openedPorts++;
 		}
-		if(this.ns.getServerNumPortsRequired(target) <= openedPorts){
-			var result = this.ns.nuke(target) ? "SUCCESS" : "FAILURE";
-			this.ns.tprint("Nuking " + target + ": " + result);
+		if(this.ns.getServerNumPortsRequired(server.hostname) <= openedPorts){
+			var result = this.ns.nuke(server.hostname) ? "SUCCESS" : "FAILURE";
+			this.ns.tprint("Nuking " + server.hostname + ": " + result);
 			return result == "SUCCESS";
 		}
 		return false;
+	}
+
+	getServerList()
+	{
+		return this.servers;
+	}
+
+	getHackworthyServers()
+	{
+		let tempservers = [];
+		for(let i = 0; i < this.servers.length; i++)
+		{
+			let server = this.servers[i];
+			if(server.moneyMax > 0)
+			{
+				tempservers.push(server);
+			}
+		}
+		return tempservers;
 	}
 }
 
 /** @param {NS} ns **/
 export async function main(ns) {
 	var crawler = new Crawler(ns);
-	await crawler.run();
 }

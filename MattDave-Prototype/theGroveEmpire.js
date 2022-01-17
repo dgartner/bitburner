@@ -148,7 +148,7 @@ async function mainLoop(ns, targetList, army, myRealms)
 
     while(true)
     {
-        ns.sprintf("Outer loop count: %d", ++loopCount);
+        ns.tprint(ns.sprintf("Outer loop count: %d", ++loopCount));
 
         ns.print("Planning...");
         let agents = army.getAgents();
@@ -157,38 +157,39 @@ async function mainLoop(ns, targetList, army, myRealms)
 
         ns.print("\tIdentifying operations in progress...");
         let curTime = ns.getTimeSinceLastAug();
-        let alreadyTargetted = new Array();
-        for (var i = 0; i < agents.length; i++)
-        {
-            let agent = agents[i];
+        // let alreadyTargetted = new Array();
+        // for (var i = 0; i < agents.length; i++)
+        // {
+        //     await ns.sleep(10);
+        //     let agent = agents[i];
 
-            // Only consider agents who are actually out in the field.
-            if (agent.getReadyTime() > curTime)
-            {
-                let agentTarget = agent.getCurrentTarget();
-                if (agentTarget)
-                {
-                    if (!alreadyTargetted.includes(agentTarget))
-                    {
-                        // ns.tprint("\t\tAlready targetting: " + agentTarget);
-                        alreadyTargetted.push(agentTarget);
-                    }  
-                }
-            }
-        }
+        //     // Only consider agents who are actually out in the field.
+        //     if (agent.getReadyTime() > curTime)
+        //     {
+        //         let agentTarget = agent.getCurrentTarget();
+        //         if (agentTarget)
+        //         {
+        //             if (!alreadyTargetted.includes(agentTarget))
+        //             {
+        //                 // ns.tprint("\t\tAlready targetting: " + agentTarget);
+        //                 alreadyTargetted.push(agentTarget);
+        //             }  
+        //         }
+        //     }
+        // }
 
         // Filter out any targets with ongoing operations
-        let totalTargets = targetList.length;
-        let filteredTargetsList = targetList.filter(filterTargetsWithOngoingOperations, alreadyTargetted);
+        // let totalTargets = targetList.length;
+        // let filteredTargetsList = targetList.filter(filterTargetsWithOngoingOperations, alreadyTargetted);
         
-        let availableTargets = filteredTargetsList.length;
+        // let availableTargets = totalTargets.length;
         // ns.tprint("\tTargets without Operations: " + availableTargets + " of " + totalTargets);
 
         let availableTargetNames = new Array();
-        for (var i = 0; i < filteredTargetsList.length; i++)
+        for (var i = 0; i < targetList.length; i++)
         {
             // ns.print("DEBUG (" + i + "): " + filteredTargetsList[i].getHostname());
-            availableTargetNames.push(filteredTargetsList[i].getHostname());
+            availableTargetNames.push(targetList[i].getHostname());
         }
             
         if (availableTargetNames.length == 0)
@@ -226,7 +227,7 @@ async function mainLoop(ns, targetList, army, myRealms)
             report['Agents Assigned'] = ongoingOp.getAgentsRequired();
             report['Remaining Time'] = remainingTimeMinutes;
 
-            ns.sprintf("Operation Report: %s", JSON.stringify(report));
+            ns.print(ns.sprintf("Operation Report: %s", JSON.stringify(report)));
         }
 
         let curTargets = new Array();
@@ -234,10 +235,10 @@ async function mainLoop(ns, targetList, army, myRealms)
             curTargets.push(ongoingOperations[i].getTarget());
 
         // Restart if no available targets
-        if (curTargets.length == totalTargets)
+        if (curTargets.length == targetList.length)
         {
-            ns.print("Waiting 10 seconds for new targets...");
-            await ns.sleep(10 * 1000);
+            ns.print("Waiting 60 seconds for new targets...");
+            await ns.sleep(60 * 1000);
             continue;
         }
 
@@ -246,6 +247,8 @@ async function mainLoop(ns, targetList, army, myRealms)
         let currentMaxOperationDuration = OPERATION_MAX_RUNTIME;
         while(true)
         {
+
+
             for (var i = 0; i < availableTargetsList.length; i++)
             {
                 let currentTarget = availableTargetsList[i];
@@ -273,7 +276,7 @@ async function mainLoop(ns, targetList, army, myRealms)
 
                 if (currentMaxOperationDuration > OPERATION_HARD_STOP_RUNTIME)
                 {
-                    ns.sprintf("Will not allow operations to exceed 10 minutes. Sleeping for 1 minute then restarting.");
+                    ns.print("Will not allow operations to exceed 10 minutes. Sleeping for 1 minute then restarting.");
                     await ns.sleep(60 * 1000);
                     break;
                 }
@@ -282,11 +285,13 @@ async function mainLoop(ns, targetList, army, myRealms)
                 break;
 
             // Safety sleep
-            await ns.sleep(20);
+            await ns.sleep(1000);
         }
         
         if (!currentOperation)
         {
+            ns.print("Forcing a reload after 1 minute");
+            await ns.sleep(60 * 1000);
             continue;
         }
         
@@ -298,14 +303,24 @@ async function mainLoop(ns, targetList, army, myRealms)
         // Work an op to completion
         while(agentsCommittedToOps < agentsRequiredForOps)
         {
+ 
+
+
             let currentTime = ns.getTimeSinceLastAug();
-            ns.print("\tCurrent Time: " + currentTime);
+            // ns.print("\tCurrent Time: " + currentTime);
 
             let availableAgents = agents.filter(agentReadyFilter, currentTime);
             // ns.print("\t\tAvailable Agents: " + availableAgents.length);
 
             for(var i = 0; i < availableAgents.length; i++)
             {
+                // It is necessary to throttle the script
+                // 10 seems to work fine
+                let delay = 2;
+
+                // ns.print("Delaying " + delay + "ms");
+                await ns.sleep(delay);
+                
                 // DEBUG log
                 // ns.print("\tDEBUG: Agent start");
 
@@ -320,6 +335,7 @@ async function mainLoop(ns, targetList, army, myRealms)
                 let operationAction = currentOperation.getAction();
                 let operationScript = currentOperation.getActionScript();
                 let operationDuration = determineActionDuration(ns, operationTarget, operationAction);
+                let operationTimeInSeconds = operationDuration / 60;
                 let operationCompletionTime = currentTime + operationDuration;
                 let operationActionId = actionId++;
 
@@ -329,8 +345,8 @@ async function mainLoop(ns, targetList, army, myRealms)
                 ns.print("\t\tAgent: " + agentName + " (" + agentHomeworld + ")");
                 ns.print("\t\tAgents Committed (" + agentsCommittedToOps + " of " + agentsRequiredForOps + ")");
                 ns.print("\t\tTarget: " + operationTarget);
-                ns.print("\t\tAction (ID " + operationActionId + "): " + operationAction + " (" + operationScript + ")");
-                ns.sprintf("\t\tDuration: %d (Completion time: %d)", operationDuration, operationCompletionTime);
+                // ns.print("\t\tAction (ID " + operationActionId + "): " + operationAction + " (" + operationScript + ")");
+                ns.print(ns.sprintf("\t\tDuration in seconds: %d (Completion time: %d)", operationTimeInSeconds, operationCompletionTime));
             
                 ns.exec(operationScript, agentHomeworld, NUM_THREADS, operationTarget, operationActionId);
 
@@ -339,8 +355,7 @@ async function mainLoop(ns, targetList, army, myRealms)
 
                 // ns.print("Agent Deployed!");
 
-                // Super brief delay because it feels right and why not
-                await ns.sleep(20);
+                
 
                 // Skip wait if we have fulfilled the current op
                 if (agentsCommittedToOps >= agentsRequiredForOps)
@@ -761,6 +776,7 @@ async function raiseArmy(ns, realms, additionalHosts)
         await buildHomeworlInfrastructure(ns, homeworldName);
 
         ns.print("\t\tCommissioning agents...");
+        // await ns.sleep(5);
         let agents = commisionAgents(ns, homeworldName, homeworldCapacity);
 
         ns.print("\t\tAdding agents to army...");

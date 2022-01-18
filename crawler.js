@@ -34,8 +34,9 @@ export class Crawler {
 		this.recurseDepth--;
 	}
 
-	nukeAll()
+	async nukeAll()
 	{
+		await this.run();
 		this.servers.forEach(server => this.nukeServer(server));
 	}
 
@@ -82,7 +83,8 @@ export class Crawler {
 			let server = this.ns.getServer(this.servers[i]);
 			if(server.moneyMax > 0)
 			{
-				if(server.requiredHackingSkill < (this.ns.getPlayer().hacking * 0.25))
+				let hackThreshold = Math.max(this.ns.getPlayer().hacking * 0.25, 50);
+				if(server.requiredHackingSkill < hackThreshold)
 				{
 					tempservers.push(server.hostname);
 				}
@@ -93,6 +95,7 @@ export class Crawler {
 
 	async infestAll()
 	{
+		await this.run();
 		for(let i = 0; i < this.servers.length; i++)
 		{
 			await this.infest(this.servers[i]);

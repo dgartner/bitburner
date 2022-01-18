@@ -14,7 +14,7 @@ export async function main(ns) {
 		if(!ns.isRunning("weaken.js", host, target, target))
 		{
 			var weakenRam = ns.getScriptRam("weaken.js");
-			var hackRam = ns.getScriptRam("heck.js");
+			var hackRam = ns.getScriptRam("hack.js");
 			var growRam = ns.getScriptRam("grow.js");
 		 	var minSec = ns.getServerMinSecurityLevel(target);
 
@@ -41,7 +41,7 @@ export async function main(ns) {
 			}
 			if(hackThreads > 0) {
 				//ns.hack(target, { threads: 1 });
-				ns.exec("heck.js", host, hackThreads, target, target);
+				ns.exec("hack.js", host, hackThreads, target, target);
 			}
 			if(growThreads > 0) {
 				//ns.grow(target, { threads: 1 });

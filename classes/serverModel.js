@@ -1,5 +1,3 @@
-var gns;
-
 export class Server {
     constructor(ns, name){
         this.ns = ns;

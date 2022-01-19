@@ -201,24 +201,24 @@ async function mainLoop(ns, targetList, agencies, myRealms)
             // If no valid operation were found, add a minute to the allowable time
             if (!currentOperation)
             {
-                currentMaxOperationDuration = currentMaxOperationDuration + (60 * 1000);
+                let currentMaxOperationDurationInMinutes = currentMaxOperationDuration / 1000 / 60;
 
-                if (currentMaxOperationDuration > OPERATION_HARD_STOP_RUNTIME_IN_MINUTES)
-                {
-                    ns.print(ns.sprintf("Will not allow operations to exceed %d minutes. Sleeping for 10 seconds then restarting.", OPERATION_HARD_STOP_RUNTIME_IN_MINUTES));
-                    await ns.sleep(10 * 1000);
-                    break;
-                }
+                ns.print(ns.sprintf("No operation found under %d minutes. Researting the search with +15 minutes to the max", currentMaxOperationDurationInMinutes));
+
+                currentMaxOperationDuration = currentMaxOperationDuration + (15 * 60 * 1000);
+                await ns.sleep(10 * 1000);
             }
             else
                 break;
         }
 
         // Another safety check I'm hacking in...
-        if (currentOperation == null || currentOperation.getAgentsRequired() == null || currentOperation.getAgentsRequired() == 0)
+        if (currentOperation == null)
             continue;
 
         let agentsRequiredForOps = currentOperation.getAgentsRequired();
+        if (agentsRequiredForOps == null || isNaN(agentsRequiredForOps) || agentsRequiredForOps == 0)
+
         ns.print("Agents required: " + agentsRequiredForOps);
         
         // Work an op to completion
@@ -234,7 +234,7 @@ async function mainLoop(ns, targetList, agencies, myRealms)
                 // ns.tprint(ns.sprintf("\n\tAgency: %s\n\tAvailable Agents: %d", agency.getHomeworld(), availableAgents));
 
                 // If no available agencies, move on to the next agency
-                if (availableAgents == 0)
+                if (availableAgents == null || isNaN(availableAgents) || availableAgents == null || availableAgents == 0)
                     continue;
 
                 // Only take as many agents as needed
@@ -460,6 +460,7 @@ async function buildInfrastructure(ns, homeworld)
 function determineActionForServer(ns, serverData)
 {
     let operation = null;
+    let coreCount = serverData.getNumberOfCores();
     
     if (!serverData.isHackable)
     {
@@ -479,7 +480,6 @@ function determineActionForServer(ns, serverData)
         {
             // Brief testing shows threadcount scales linearly so that's nice.
             let threadCount = 1;
-            let coreCount = 1; // TODO Eventually we'll need to get the number of core's we're running on.
             let weakenAnalysis = ns.weakenAnalyze(threadCount, coreCount);
 
             if (weakenAnalysis == 0)
@@ -532,7 +532,7 @@ function determineActionForServer(ns, serverData)
                 let growAttacksRequired = 1;
                 // Safety Check
                 if (growthPercentNeeded > 1)
-                    growAttacksRequired = Math.ceil(ns.growthAnalyze(serverData.getHostname(), growthPercentNeeded));
+                    growAttacksRequired = Math.ceil(ns.growthAnalyze(serverData.getHostname(), growthPercentNeeded, coreCount));
 
                 let operationDuration = ns.getGrowTime(serverData.getHostname());
 
@@ -771,7 +771,7 @@ function setToList(mySet)
 
 class ServerData
 {
-    constructor(hostname, isHackable, hasAdminRights, maxMoney, currentMoney, minSecurity, currentSecurity)
+    constructor(hostname, isHackable, hasAdminRights, maxMoney, currentMoney, minSecurity, currentSecurity, numberOfCores)
     {
         this.hostname = hostname;
         this.isHackable = isHackable;
@@ -780,6 +780,7 @@ class ServerData
         this.currentMoney = currentMoney;
         this.minSecurity = minSecurity;
         this.currentSecurity = currentSecurity;
+        this.numberOfCores = numberOfCores;
     }
 
     /** @return {boolean} */
@@ -802,6 +803,9 @@ class ServerData
 
     /** @returns {Number} */
     getCurrentSecurity() { return this.currentSecurity; }
+
+    /** @returns {Number} */
+    getNumberOfCores() { return this.numberOfCores; }
 }
 
 /** @param {NS} ns 
@@ -864,7 +868,10 @@ function runAnalysis(ns, logPrefix, server)
     let currentSecurity = server.hackDifficulty;
     ns.print(logPrefix + "Current Security: " + currentSecurity);
 
-    let serverData = new ServerData(server.hostname, isHackable, hasAdminRights, maxMoney, currentMoney, minSecurity, currentSecurity);
+    let numberOfCores = server.cpuCores;
+    ns.print(logPrefix + "Number of cores: " + numberOfCores);
+
+    let serverData = new ServerData(server.hostname, isHackable, hasAdminRights, maxMoney, currentMoney, minSecurity, currentSecurity, numberOfCores);
     return serverData;
 }
 
@@ -1113,7 +1120,6 @@ class Agency
         let availableAgentCount = Math.floor(availableRam / this.agentCost);
 
         this.availableAgents = availableAgentCount;
-        // this.ns.tprint("Agency: Number of agents: " + this.availableAgents);
 
         return this.availableAgents;
     }
@@ -1128,22 +1134,6 @@ class Agency
         let activeTargets = this.ongoingOperations.map(mapOperationNames);
         return activeTargets;
     }
-
-    // refreshAgentCount()
-    // {
-    //     let timestamp = this.ns.getTimeSinceLastAug();
-
-    //     // Using new available agent logic
-    //     this.getAvailableAgentsByCost();
-
-    //     // OLD LOGIC: Welcome back the returning agents.
-    //     // let returningAgents = this.ongoingOperations.filter(filterCompletedAssignments, timestamp);
-    //     // for (var i = 0; i < returningAgents.length; i++)
-    //     //     this.availableAgents = this.availableAgents + returningAgents[i].agentCount;
-
-    //     // Update ongoing ops data
-    //     this.ongoingOperations = this.ongoingOperations.filter(filterOngoingAssignments, timestamp);
-    // }
 
     /**
      * @param {String} scriptName
@@ -1166,15 +1156,8 @@ class Agency
         this.getAvailableAgents();
 
         // Update available agents
-        let actualNumberOfAgentsDeployed = null;
-        if (this.availableAgents < numberOfAgents)
-        {
-            this.ns.print(this.ns.sprintf("Will only deploy %d of %d agents.", this.availableAgents, numberOfAgents));
-            actualNumberOfAgentsDeployed = this.availableAgents;
-        }
-        else
-            actualNumberOfAgentsDeployed = numberOfAgents;
-
+        let actualNumberOfAgentsDeployed = Math.min(numberOfAgents, this.availableAgents);
+        
         let operationCountReportLocal = this.ns.sprintf("%s Operation ID: %d", this.homeworld, this.operationCount);
         let operationCountGlobal = this.ns.sprintf("Global Operation ID: %d", globalOperationCount);
         let result = this.ns.exec(scriptName, this.homeworld, actualNumberOfAgentsDeployed, target, actualNumberOfAgentsDeployed, runtimeReport, operationCountReportLocal, operationCountGlobal);
@@ -1187,7 +1170,7 @@ class Agency
         else
         {
             this.ns.print(this.ns.sprintf("Failed to launch the operation %d", this.operationCount));
-            return -1;
+            return 0;
         }
 
         return actualNumberOfAgentsDeployed;

@@ -1,2 +1,6 @@
+// Project files
+slnx.sqlite
+.suo
+
 .vs/
-.vscode
+.vscode/

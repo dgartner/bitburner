@@ -3,5 +3,5 @@ export async function main(ns)
 {
     let target = ns.args[0];
 
-    await ns.grow(target);
+    await ns.weaken(target);
 }

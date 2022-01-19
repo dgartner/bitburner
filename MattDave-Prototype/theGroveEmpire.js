@@ -1,7 +1,7 @@
 const home = "home";
-const HACKER_SCRIPT = "hack.js";
-const WEAKEN_SCRIPT = "weaken.js";
-const GROW_SCRIPT = "grow.js";
+const HACKER_SCRIPT = "/v2/hack.js";
+const WEAKEN_SCRIPT = "/v2/weaken.js";
+const GROW_SCRIPT = "/v2/grow.js";
 
 const EXE_BRUTE_SSH = "BruteSSH.exe";
 const EXE_FTP_CRACK = "FTPCrack.exe";
@@ -29,9 +29,9 @@ const ARMY_FIELD_REPORT_PORT = 1;
 const AGENT_DROPPOINT = 2;
 const NUM_THREADS = 1;
 
-// TODO | currently 1 minutes
-const OPERATION_MAX_RUNTIME = 1 * 60 * 1000; 
-const OPERATION_HARD_STOP_RUNTIME = 10 * 60 * 1000
+// TODO | currently 5 minutes
+const OPERATION_MAX_RUNTIME = 5 * 60 * 1000; 
+const OPERATION_HARD_STOP_RUNTIME_IN_MINUTES = 60
 
 /** @param {NS} ns **/
 export async function main(ns) 
@@ -39,6 +39,27 @@ export async function main(ns)
     ns.print("It begins.");
     let myRealms = ns.getPurchasedServers();
 
+    myRealms.push(home);
+
+    // Setup agencies to run my scripts
+    let agencies = new Array();
+    for (var i = 0; i < myRealms.length; i++)
+    {
+        let homeworld = myRealms[i];
+
+        let maxRam = ns.getServerMaxRam(homeworld);
+        let capacity = Math.floor(maxRam / AGENT_COST);
+
+        // Save some room in home
+        if (homeworld == home)
+            capacity = capacity - 50;
+
+        let agency = new Agency(ns, homeworld, capacity, AGENT_COST);
+        agencies.push(agency);
+    }
+
+
+    // Scan for targets
     let depth = ns.args[0];
     if (!depth)
     {
@@ -46,31 +67,219 @@ export async function main(ns)
         depth = 1;
     }
 
-    let protectedRealm = ns.args[1];
-
     ns.print("Identifying targets...");
     let targetSet = runScan(ns, myRealms, depth);
     let targetList = setToList(targetSet);
-    
-    if(protectedRealm)
-        myRealms.push(protectedRealm);
-
-    ns.print("Raising an army");
-    let army = await raiseArmy(ns, myRealms, targetList);
-
-    ns.print("Army size: " + army.getAgents().length);
-
-
 
     let serverDataList = runServerAnalysis(ns, targetList, myRealms);
     ns.print("Server Data: " + JSON.stringify(serverDataList));
 
-// Pretty sure this was just for testing
-    // serverDataList.sort(sortServerByMaxMoney);
-    // ns.print("\n\nSorted Server Data: " + JSON.stringify(serverDataList));
+    for (var i = 0; i < serverDataList.length; i++)
+    {
+        let serverData = serverDataList[i];
 
-    ns.print("Test main loop");
-    await mainLoop(ns, serverDataList, army, myRealms);
+        let hasAdminRights = serverData.hasAdminRights;
+
+        let isHackable = serverData.isHackable;
+        if ( hasAdminRights && isHackable)
+        {
+            let homeworld = serverData.getHostname();
+
+            // Really shouldn't be needed here...
+            if (homeworld == home)
+                continue;
+
+            let maxRam = ns.getServerMaxRam(homeworld);
+            let capacity = Math.floor(maxRam / AGENT_COST);
+
+            let agency = new Agency(ns, homeworld, capacity);
+            ns.print(ns.sprintf("Adding %s to my agencies", JSON.stringify(agency)));
+
+            agencies.push(agency);
+        }
+    }
+
+
+    for (var i = 0; i < agencies.length; i++)
+    {
+        let homeworld = agencies[i].getHomeworld();
+        await buildInfrastructure(ns, homeworld);
+    }
+    
+
+    ns.print("Main loop");
+    await mainLoop(ns, serverDataList, agencies, myRealms);
+}
+
+/** @param {ServerData} serverData */
+function mapServerDataToHostname(serverData)
+{
+    return serverData.getHostname();
+}
+
+/** @param {ServerData} serverData */
+function filterTargetsWithoutOngoingOperations(serverData)
+{
+    return !this.includes(serverData.getHostname());
+}
+
+/** @param {NS} ns
+ * @param {Array<ServerData>} targetList
+ * @param {Array<Agency>} agencies
+ */
+async function mainLoop(ns, targetList, agencies, myRealms)
+{
+    var loopCount = 0;
+    var actionId = 0;
+
+
+    let targetListHostnames = targetList.map(mapServerDataToHostname);
+
+    while(true)
+    {
+
+        ns.print("\tRefreshing target Data...");
+
+        let unprocessedTargetList = runServerAnalysis(ns, targetListHostnames, myRealms);
+        // ns.print("Unprocessed Targets: " + JSON.stringify(unprocessedTargetList));
+
+        let prioritizedTargetList = prioritizeTargets(ns, unprocessedTargetList);
+        // ns.print("Prioritized targets: " + JSON.stringify(prioritizedTargetList));
+
+        // ns.tprint(JSON.stringify(prioritizedTargetList));
+        let availableTargetsList = prioritizedTargetList.filter(filterUnavailableTargets);
+
+        // Get current hitlist
+        let targetsWithOngoingOperations = new Array();
+        for (var i = 0; i < agencies.length; i++)
+            targetsWithOngoingOperations = targetsWithOngoingOperations.concat(agencies[i].getActiveTargetList());
+
+        // Find targets that do not already have ongoing operations
+        let openTargets = availableTargetsList.filter(filterTargetsWithoutOngoingOperations, targetsWithOngoingOperations);
+
+        if (openTargets.length == 0)
+        {
+            ns.print("No available targets. Waiting 1 minute then trying again.");
+            await ns.sleep(60 * 1000);
+            continue;
+        }
+
+        // ns.tprint("Open targets: " + JSON.stringify(openTargets));
+
+        // Find next operation. If none available in the time allowed, add a minute to the time allowed
+        let currentOperation = null;
+        let currentMaxOperationDuration = OPERATION_MAX_RUNTIME;
+        while(true)
+        {
+            // Delay 10ms at the start of each check to prevent 'infinite loops" that the game checks for
+            await ns.sleep(1);
+
+            for (var i = 0; i < openTargets.length; i++)
+            {
+                let currentTarget = openTargets[i];
+
+                // Now that we have a target, determine the operation type
+                let checkOperation = await determineActionForServer(ns, currentTarget);
+
+                // Skip targets without a recommended action
+                if (checkOperation.getAction() == AGENT_NOT_APPLICABLE)
+                    continue;
+
+                // Unsure why I need this check...
+                if (checkOperation.getAgentsRequired() == null || checkOperation.getAgentsRequired() == 0)
+                    continue;
+
+                // Now that we have an operation type, determine if duration is acceptable.
+                if (checkOperation.getOperationDuration() <= currentMaxOperationDuration)
+                {
+                    ns.print("Found operation: " + JSON.stringify(checkOperation));
+                    currentOperation = checkOperation;
+                    break;
+                }
+            }
+
+            // If no valid operation were found, add a minute to the allowable time
+            if (!currentOperation)
+            {
+                currentMaxOperationDuration = currentMaxOperationDuration + (60 * 1000);
+
+                if (currentMaxOperationDuration > OPERATION_HARD_STOP_RUNTIME_IN_MINUTES)
+                {
+                    ns.print(ns.sprintf("Will not allow operations to exceed %d minutes. Sleeping for 10 seconds then restarting.", OPERATION_HARD_STOP_RUNTIME_IN_MINUTES));
+                    await ns.sleep(10 * 1000);
+                    break;
+                }
+            }
+            else
+                break;
+        }
+
+        // Another safety check I'm hacking in...
+        if (currentOperation == null || currentOperation.getAgentsRequired() == null || currentOperation.getAgentsRequired() == 0)
+            continue;
+
+        let agentsRequiredForOps = currentOperation.getAgentsRequired();
+        ns.print("Agents required: " + agentsRequiredForOps);
+        
+        // Work an op to completion
+        while(agentsRequiredForOps > 0)
+        {
+            for (var i = 0; i < agencies.length; i++)
+            {
+                let agency = agencies[i];
+
+                let availableAgents = agency.getAvailableAgents();
+
+                // ns.tprint("Main loop agent count: " + availableAgents);
+                // ns.tprint(ns.sprintf("\n\tAgency: %s\n\tAvailable Agents: %d", agency.getHomeworld(), availableAgents));
+
+                // If no available agencies, move on to the next agency
+                if (availableAgents == 0)
+                    continue;
+
+                // Only take as many agents as needed
+                if (availableAgents > agentsRequiredForOps)
+                    availableAgents = agentsRequiredForOps;
+               
+                let scriptName = currentOperation.getActionScript();
+                let target = currentOperation.getTarget();
+                let operationDuration = currentOperation.getOperationDuration();
+
+                let operationCompletion = operationDuration + ns.getTimeSinceLastAug();
+
+                ns.print(ns.sprintf("\nAgent Homeworld: %s\nScript Name: %s\nTarget: %s\nAgent Count: %d\nDuration: %d\nCompletion: %d", agency.getHomeworld(), scriptName, target, availableAgents, operationDuration, operationCompletion));
+                
+
+                let operationDurationSeconds = (operationDuration / 1000) % 60;
+                let operationDurationMinutes = Math.round((operationDuration / 1000 / 60) % 60);
+                let operationDurationHours = Math.round((operationDuration / 1000 / 60 / 60));
+                let operationRuntimeString = ns.sprintf("%dh %dm %ds", operationDurationHours, operationDurationMinutes, operationDurationSeconds);
+                let agentsDeployed = agency.deployAgents(scriptName, target, availableAgents, operationCompletion, actionId++, operationRuntimeString);
+
+                // Update agents requried count
+                agentsRequiredForOps = agentsRequiredForOps - agentsDeployed;
+                ns.print("Agents remaining: " + agentsRequiredForOps);
+                
+                // Exit loop if enough agents have been found.
+                if (agentsRequiredForOps == 0)
+                    break;
+
+                // Another 10ms delay to satisfy the game
+                await ns.sleep(10);
+            }
+
+            // If we still need agents at this point, we just need to wait for existing agents to free up.
+            if (agentsRequiredForOps > 0)
+            {
+                ns.print(ns.sprintf("Still need %d agents. Waiting 10 seconds for existing operation to complete.", agentsRequiredForOps));
+                await ns.sleep(10 * 1000);
+            }
+        }
+
+        ns.print("Operation fulfilled, identifying next operation");
+    }
+        
+
 }
 
 /** @param {NS} ns
@@ -134,239 +343,6 @@ function filterByNotComplete(operation)
     return operation.operationCompletion > this;
 }
 
-/** @param {NS} ns
- * @param {Array<ServerData>} targetList
- * @param {Army} army
- * @param {Array<ServerData>} myRealms
- */
-async function mainLoop(ns, targetList, army, myRealms)
-{
-    var loopCount = 0;
-    var actionId = 0;
-
-    let ongoingOperations = new Array();
-
-    while(true)
-    {
-        ns.sprintf("Outer loop count: %d", ++loopCount);
-
-        ns.print("Planning...");
-        let agents = army.getAgents();
-        ns.print("\tAgent Data");
-        // ns.tprint("\t\tTotal Agents: " + agents.length);
-
-        ns.print("\tIdentifying operations in progress...");
-        let curTime = ns.getTimeSinceLastAug();
-        let alreadyTargetted = new Array();
-        for (var i = 0; i < agents.length; i++)
-        {
-            let agent = agents[i];
-
-            // Only consider agents who are actually out in the field.
-            if (agent.getReadyTime() > curTime)
-            {
-                let agentTarget = agent.getCurrentTarget();
-                if (agentTarget)
-                {
-                    if (!alreadyTargetted.includes(agentTarget))
-                    {
-                        // ns.tprint("\t\tAlready targetting: " + agentTarget);
-                        alreadyTargetted.push(agentTarget);
-                    }  
-                }
-            }
-        }
-
-        // Filter out any targets with ongoing operations
-        let totalTargets = targetList.length;
-        let filteredTargetsList = targetList.filter(filterTargetsWithOngoingOperations, alreadyTargetted);
-        
-        let availableTargets = filteredTargetsList.length;
-        // ns.tprint("\tTargets without Operations: " + availableTargets + " of " + totalTargets);
-
-        let availableTargetNames = new Array();
-        for (var i = 0; i < filteredTargetsList.length; i++)
-        {
-            // ns.print("DEBUG (" + i + "): " + filteredTargetsList[i].getHostname());
-            availableTargetNames.push(filteredTargetsList[i].getHostname());
-        }
-            
-        if (availableTargetNames.length == 0)
-        {
-            // TODO Add logic to give agents something to do here.
-            ns.print("\t\t[TEMPORARY CODE] Waiting for available targets...");
-            await ns.sleep(10 * 1000);
-            continue;
-        }
-
-        ns.print("\tRefreshing target Data...");
-
-        let unprocessedTargetList = runServerAnalysis(ns, availableTargetNames, myRealms);
-        // ns.print("Unprocessed Targets: " + JSON.stringify(unprocessedTargetList));
-
-        let prioritizedTargetList = prioritizeTargets(ns, unprocessedTargetList);
-        // ns.print("Prioritized targets: " + JSON.stringify(prioritizedTargetList));
-
-        // ns.tprint(JSON.stringify(prioritizedTargetList));
-        let availableTargetsList = prioritizedTargetList.filter(filterUnavailableTargets);
-
-        ongoingOperations.sort(sortByCompletionTime);
-        ongoingOperations = ongoingOperations.filter(filterByNotComplete, ns.getTimeSinceLastAug());
-
-        ns.print("Ongoing Assignments:");
-        for (var i = 0; i < ongoingOperations.length; i++)
-        {
-            let ongoingOp = ongoingOperations[i];
-            let completionTime = ongoingOp.getOperationCompletion();
-            let remainingTime = completionTime - curTime;
-            let remainingTimeMinutes = remainingTime / 1000 / 60;
-
-            report = [];
-            report['Target'] = ongoingOp.getTarget();
-            report['Agents Assigned'] = ongoingOp.getAgentsRequired();
-            report['Remaining Time'] = remainingTimeMinutes;
-
-            ns.sprintf("Operation Report: %s", JSON.stringify(report));
-        }
-
-        let curTargets = new Array();
-        for (var i = 0; i < ongoingOperations.length; i++)
-            curTargets.push(ongoingOperations[i].getTarget());
-
-        // Restart if no available targets
-        if (curTargets.length == totalTargets)
-        {
-            ns.print("Waiting 10 seconds for new targets...");
-            await ns.sleep(10 * 1000);
-            continue;
-        }
-
-        // Find next operation. If none available in the time allowed, add a minute to the time allowed
-        let currentOperation = null;
-        let currentMaxOperationDuration = OPERATION_MAX_RUNTIME;
-        while(true)
-        {
-            for (var i = 0; i < availableTargetsList.length; i++)
-            {
-                let currentTarget = availableTargetsList[i];
-
-                // Skip if target is already undergoing an op
-                if (curTargets.includes(currentTarget))
-                    continue;
-
-                let checkOperation = determineActionForServer(ns, currentTarget);
-
-                // ns.tprint("Checking operation: " + JSON.stringify(checkOperation));
-
-                if (checkOperation.getOperationDuration() <= currentMaxOperationDuration)
-                {
-                    currentOperation = checkOperation;
-                    // ns.tprint("\nValid operation found.");
-                    break;
-                }
-            }
-
-            // Add a minute to the allowable time if no operations were found.
-            if (!currentOperation)
-            {
-                currentMaxOperationDuration = currentMaxOperationDuration + (60 * 1000);
-
-                if (currentMaxOperationDuration > OPERATION_HARD_STOP_RUNTIME)
-                {
-                    ns.sprintf("Will not allow operations to exceed 10 minutes. Sleeping for 1 minute then restarting.");
-                    await ns.sleep(60 * 1000);
-                    break;
-                }
-            }
-            else
-                break;
-
-            // Safety sleep
-            await ns.sleep(20);
-        }
-        
-        if (!currentOperation)
-        {
-            continue;
-        }
-        
-        ongoingOperations.push(currentOperation);
-
-        let agentsRequiredForOps = currentOperation.getAgentsRequired();
-        let agentsCommittedToOps = 0;
-        
-        // Work an op to completion
-        while(agentsCommittedToOps < agentsRequiredForOps)
-        {
-            let currentTime = ns.getTimeSinceLastAug();
-            ns.print("\tCurrent Time: " + currentTime);
-
-            let availableAgents = agents.filter(agentReadyFilter, currentTime);
-            // ns.print("\t\tAvailable Agents: " + availableAgents.length);
-
-            for(var i = 0; i < availableAgents.length; i++)
-            {
-                // DEBUG log
-                // ns.print("\tDEBUG: Agent start");
-
-                currentTime = ns.getTimeSinceLastAug();
-                // ns.print("\tCurrent Time: " + currentTime);
-
-                let agent = availableAgents[i];
-                let agentName = agent.getName();
-                let agentHomeworld = agent.getHomeworld();
-            
-                let operationTarget = currentOperation.getTarget();
-                let operationAction = currentOperation.getAction();
-                let operationScript = currentOperation.getActionScript();
-                let operationDuration = determineActionDuration(ns, operationTarget, operationAction);
-                let operationCompletionTime = currentTime + operationDuration;
-                let operationActionId = actionId++;
-
-                agentsCommittedToOps++;
-
-                ns.print("\tOperation Details");
-                ns.print("\t\tAgent: " + agentName + " (" + agentHomeworld + ")");
-                ns.print("\t\tAgents Committed (" + agentsCommittedToOps + " of " + agentsRequiredForOps + ")");
-                ns.print("\t\tTarget: " + operationTarget);
-                ns.print("\t\tAction (ID " + operationActionId + "): " + operationAction + " (" + operationScript + ")");
-                ns.sprintf("\t\tDuration: %d (Completion time: %d)", operationDuration, operationCompletionTime);
-            
-                ns.exec(operationScript, agentHomeworld, NUM_THREADS, operationTarget, operationActionId);
-
-                // The time difference between calculating completion time and this code /probably/ won't matter.
-                agent.assignFieldWork(operationTarget, operationCompletionTime);
-
-                // ns.print("Agent Deployed!");
-
-                // Super brief delay because it feels right and why not
-                await ns.sleep(20);
-
-                // Skip wait if we have fulfilled the current op
-                if (agentsCommittedToOps >= agentsRequiredForOps)
-                {
-                    ns.print("Operation completely underway!");
-                    break;
-                }
-            } 
-
-            // Skip wait if we have fulfilled the current op
-            if (agentsCommittedToOps >= agentsRequiredForOps)
-            {
-                ns.print("Operation completely underway!");
-                break;
-            }
-
-            let sleepTime = 5;
-            ns.print("Waiting " + sleepTime + " seconds for new agents to become available.");
-            await ns.sleep(sleepTime * 1000);
-        }
-
-        ns.print("Operation fulfilled, identifying next operation");
-    }
-        
-
-}
 
 class Agent
 {
@@ -465,109 +441,17 @@ async function buildHomeworlInfrastructure(ns, homeworld)
         await ns.scp(GROW_SCRIPT, homeworld);
 }
 
-class Army
+/** @param {NS} ns
+ * @param {String} homeworld
+ */
+async function buildInfrastructure(ns, homeworld)
 {
-    // I think the agents list might be useless here
-    constructor(ns, agents)
-    {
-        this.ns = ns;
-
-        this.agents = agents;
-        this.operationCount = 0;
-    }
-
-    /** @returns {Agent} */
-    getAgents() { return this.agents; }
-
-    /** @returns {Number} */
-    getNextOperationId() { return this.operationCount++; }
-
-    getFieldReport()
-    {
-        let report = new Array();
-        report[AGENT_READY] = new Array();
-        report[AGENT_HACK] = new Array();
-        report[AGENT_GROW] = new Array();
-        report[AGENT_WEAK] = new Array();
-
-        let rawData = this.ns.peek(ARMY_FIELD_REPORT_PORT);
-        let reportData = JSON.parse(rawData);
-
-        let reportKeys = Object.keys(reportData);
-        for (var i = 0; i < reportKeys.length; i++)
-        {
-            let reportItem = reportData[i];
-
-            let name = reportItem['name'];
-            let homeworld = reportItem['homeworld'];
-            let status = reportItem['status'];
-
-            let currentTime = ns.getTimeSinceLastAug();
-
-            let agent = new Agent(name, homeworld, status, currentTime);
-            
-            report[status].push(agent);
-        }
-
-        let agentsReady = report[AGENT_READY];
-        let agentsHacking = report[AGENT_HACK];
-        let agentsGrowing = report[AGENT_GROW];
-        let agentsWeakening = report[AGENT_WEAK];
-
-        let reportSummary = "\nAgent Summary: ";
-        reportSummary = reportSummary + "\n\tReady";
-        for (var i = 0; i < agentsReady.length; i++)
-        {
-            let agent = agentsReady[i];
-            reportSummary = reportSummary + "\n\t\t" + agent.getName() + " (" + agent.getHomeworld() + ")";
-        }
-
-        reportSummary = reportSummary + "\n\tHacking";
-        for (var i = 0; i < agentsHacking.length; i++)
-        {
-            let agent = agentsHacking[i];
-            reportSummary = reportSummary + "\n\t\t" + agent.getName() + " (" + agent.getHomeworld() + ")";
-        }
-
-        reportSummary = reportSummary + "\n\tGrowing";
-        for (var i = 0; i < agentsGrowing.length; i++)
-        {
-            let agent = agentsGrowing[i];
-            reportSummary = reportSummary + "\n\t\t" + agent.getName() + " (" + agent.getHomeworld() + ")";
-        }
-
-        reportSummary = reportSummary + "\n\tWeakening";
-        for (var i = 0; i < agentsWeakening.length; i++)
-        {
-            let agent = agentsWeakening[i];
-            reportSummary = reportSummary + "\n\t\t" + agent.getName() + " (" + agent.getHomeworld() + ")";
-        }
-
-        this.ns.print(reportSummary);
-
-        return reportSummary;
-    }
-
-    // Discontinued in favor of filters
-    getAvailableAgents()
-    {
-        let availableAgents = new Array();
-
-        for (var i = 0; i < this.agents.length; i++)
-        {
-            let agent = this.agents[0];
-
-            let agentStatus = agent.getStatus();
-
-            if (agentStatus == AGENT_READY)
-                availableAgents.push(agent);
-        }
-
-        this.ns.print("There are " + availableAgents.length + " agents at the ready.");
-
-        return availableAgents;
-    }
+        // Prepare with infernal arms
+        await ns.scp(HACKER_SCRIPT, homeworld);
+        await ns.scp(WEAKEN_SCRIPT, homeworld);
+        await ns.scp(GROW_SCRIPT, homeworld);
 }
+
 
 /** @param {NS} ns
  * @param {ServerData} serverData
@@ -707,120 +591,119 @@ class Operation
     getAgentsRequired() { return this.agentsRequired; }
 }
 
-async function raiseArmy(ns, realms, additionalHosts)
-{
-    ns.print("Preparing my legions.");
+// async function raiseArmy(ns, realms, additionalHosts)
+// {
+//     ns.print("Preparing my legions.");
 
-    let agentList = new Array();
-    let agentCount = 0;
+//     let agentList = new Array();
+//     let agentCount = 0;
 
-    let hosts = new Array();
-    for (var i = 0; i < realms.length; i++)
-    {
-        let realmName = realms[i];
+//     let hosts = new Array();
+//     for (var i = 0; i < realms.length; i++)
+//     {
+//         let realmName = realms[i];
 
-        if (!hosts.includes(realmName))
-            hosts.push(realmName);
-    }
+//         if (!hosts.includes(realmName))
+//             hosts.push(realmName);
+//     }
 
-    for (var i = 0; i < additionalHosts.length; i++)
-    {
-        let realmName = additionalHosts[i];
+//     for (var i = 0; i < additionalHosts.length; i++)
+//     {
+//         let realmName = additionalHosts[i];
 
-        if (!hosts.includes(realmName))
-            hosts.push(realmName);
-    }
+//         if (!hosts.includes(realmName))
+//             hosts.push(realmName);
+//     }
 
-    let filteredHosts = hosts.filter(filterInvalidHosts);
+//     let filteredHosts = hosts.filter(filterInvalidHosts);
 
-    for (var homeworldId = 0; homeworldId < filteredHosts.length; homeworldId++)
-    {
-        ns.print("\tSearching for homeworlds in sector " + homeworldId);
+//     for (var homeworldId = 0; homeworldId < filteredHosts.length; homeworldId++)
+//     {
+//         ns.print("\tSearching for homeworlds in sector " + homeworldId);
 
-        let homeworldName = filteredHosts[homeworldId];
-        ns.print("\tIdentified suitable homeworld...");
-        ns.print("\t\tHomeworld Name: " + homeworldName);
+//         let homeworldName = filteredHosts[homeworldId];
+//         ns.print("\tIdentified suitable homeworld...");
+//         ns.print("\t\tHomeworld Name: " + homeworldName);
 
-        // Leave home alone
-        if (homeworldName == home)
-            continue;        
+//         // // Leave home alone
+//         // if (homeworldName == home)
+//         //     continue;        
 
-        let maxOverhead = ns.getServerMaxRam(homeworldName);
-        let currentOverhead = ns.getServerUsedRam(homeworldName);
-        let availableOverhead = maxOverhead - currentOverhead;
+//         let maxOverhead = ns.getServerMaxRam(homeworldName);
+//         let currentOverhead = ns.getServerUsedRam(homeworldName);
+//         let availableOverhead = maxOverhead - currentOverhead;
         
-        let homeworldCapacity = Math.floor(availableOverhead / AGENT_COST);
-        ns.print("\t\tMaximum Overhead: " + maxOverhead);
-        ns.print("\t\tCurrent Overhead: " + currentOverhead);
-        ns.print("\t\tAvailable Overhread: " + availableOverhead);
-        ns.print("\t\tHomeworld capacity: " + homeworldCapacity);
+//         let homeworldCapacity = Math.floor(availableOverhead / AGENT_COST);
 
-        // let homeworld = new Homeworld(ns, homeworldName, homeworldId, homeworldCapacity);
+//         if (homeworldName == home)
+//             homeworldCapacity = homeworldCapacity - 50;
 
-        ns.print("\t\tBuilding infrastructure...");
-        await buildHomeworlInfrastructure(ns, homeworldName);
+//         ns.print("\t\tMaximum Overhead: " + maxOverhead);
+//         ns.print("\t\tCurrent Overhead: " + currentOverhead);
+//         ns.print("\t\tAvailable Overhread: " + availableOverhead);
+//         ns.print("\t\tHomeworld capacity: " + homeworldCapacity);
 
-        ns.print("\t\tCommissioning agents...");
-        let agents = commisionAgents(ns, homeworldName, homeworldCapacity);
+//         // let homeworld = new Homeworld(ns, homeworldName, homeworldId, homeworldCapacity);
 
-        ns.print("\t\tAdding agents to army...");
-        for (var k = 0; k < agents.length; k++)
-        {
-            let agent = agents[k];
-            ns.print("\t\t\tAgent " + k + ": " + agent.getName());
+//         ns.print("\t\tBuilding infrastructure...");
+//         await buildHomeworlInfrastructure(ns, homeworldName);
 
-            agentList[agentCount++] = agent;
-        }
+//         ns.print("\t\tCommissioning agents...");
+//         await ns.sleep(2);
+//         let agents = commisionAgents(ns, homeworldName, homeworldCapacity);
 
-        // ns.print("\t\tDeploying legion...");
-        // let legion = new Legion(ns, homeworld, agents);
-        // await legion.enscribeAgentStatus();
-        ns.print("\Homeworld recruitment complete.");
-    }
+//         ns.print("\t\tAdding agents to army...");
+//         for (var k = 0; k < agents.length; k++)
+//         {
+//             let agent = agents[k];
+//             ns.print("\t\t\tAgent " + k + ": " + agent.getName());
 
-    // TODO No longer using field reports.
-    // ns.print("\nSubmitting initial field report...");
-    // let fieldReport = JSON.stringify(agentList);
-    // await ns.clearPort(ARMY_FIELD_REPORT_PORT);
-    // await ns.writePort(ARMY_FIELD_REPORT_PORT, fieldReport);
+//             agentList[agentCount++] = agent;
+//         }
 
-    let army = new Army(ns, agentList);
-    return army;
-}
+//         // ns.print("\t\tDeploying legion...");
+//         // let legion = new Legion(ns, homeworld, agents);
+//         // await legion.enscribeAgentStatus();
+//         ns.print("\Homeworld recruitment complete.");
+//     }
 
-function commisionAgents(ns, homeworld, count)
-{
-    let agents = Array(count);
-    for (var i = 0; i < count; i++)
-    {
-        let agentName = findAgent();
+//     // TODO No longer using field reports.
+//     // ns.print("\nSubmitting initial field report...");
+//     // let fieldReport = JSON.stringify(agentList);
+//     // await ns.clearPort(ARMY_FIELD_REPORT_PORT);
+//     // await ns.writePort(ARMY_FIELD_REPORT_PORT, fieldReport);
 
-        let agent = new Agent(agentName, homeworld, AGENT_READY, ns.getTimeSinceLastAug());
-        agents[i] = agent;
-    }
+//     let army = new Army(ns, agentList);
+//     return army;
+// }
 
-    return agents;
-}
+// function commisionAgents(ns, homeworld, count)
+// {
+//     let agents = Array(count);
+//     for (var i = 0; i < count; i++)
+//     {
+//         let agentName = findAgent();
+
+//         let agent = new Agent(agentName, homeworld, AGENT_READY, ns.getTimeSinceLastAug());
+//         agents[i] = agent;
+//     }
+
+//     return agents;
+// }
 
 // TODO Agent manager with unique names
     // Concern: Need to handle names running out
 
-function findAgent()
-{
-    let firstName = FIRST_NAMES[Math.floor(Math.random() * FIRST_NAME_LENGTH)];
-    let lastName = LAST_NAMES[Math.floor(Math.random() * LAST_NAME_LENGTH)];
+// function findAgent()
+// {
+//     let firstName = FIRST_NAMES[Math.floor(Math.random() * FIRST_NAME_LENGTH)];
+//     let lastName = LAST_NAMES[Math.floor(Math.random() * LAST_NAME_LENGTH)];
 
-    let name = firstName + " " + lastName;
+//     let name = firstName + " " + lastName;
 
-    return name;
-}
+//     return name;
+// }
 
-// TODO VERY TODO
-function determineNextOps(targetList)
-{
-    let ops = new Operation("n00dles", AGENT_WEAK);
-    return ops;
-}
 
 /** @param {Agent} agent */
 function agentReadyFilter(agent)
@@ -845,26 +728,26 @@ function agentSort(left, right)
 
 
 
-function determineAction(ns, target)
-{
-    let server = ns.getServer(target);
+// async function determineAction(ns, target)
+// {
+//     let server = ns.getServer(target);
 
-    portCheck(ns, server);
+//     await portCheck(ns, server);
     
-    let difficulty = server.hackDifficulty - server.minDifficulty;
-    let moneyPercent = server.moneyMax / server.moneyAvailable;
+//     let difficulty = server.hackDifficulty - server.minDifficulty;
+//     let moneyPercent = server.moneyMax / server.moneyAvailable;
     
-    // TODO This is a wild shot in the dark
-    let action = AGENT_READY;
-    if (difficulty > 10)
-        action = AGENT_WEAK;
-    else if (moneyPercent > 0.85)
-        action = AGENT_HACK;
-    else 
-        action = AGENT_GROW;
+//     // TODO This is a wild shot in the dark
+//     let action = AGENT_READY;
+//     if (difficulty > 10)
+//         action = AGENT_WEAK;
+//     else if (moneyPercent > 0.85)
+//         action = AGENT_HACK;
+//     else 
+//         action = AGENT_GROW;
     
-    return action;
-}
+//     return action;
+// }
 
 function setToList(mySet)
 {
@@ -987,7 +870,7 @@ function runAnalysis(ns, logPrefix, server)
 
 /** @param {NS} ns 
  * @param {Server} server **/
-function portCheck(ns, logPrefix, server)
+async function portCheck(ns, logPrefix, server)
 {
     let target = server.hostname;
     let openPorts = server.openPortCount;
@@ -1067,6 +950,7 @@ function portCheck(ns, logPrefix, server)
         updateNeeded = true;
     }
 
+
     return updateNeeded;
 }
 
@@ -1087,6 +971,9 @@ function runScan(ns, myRealms, depth)
             let item = newTargetIter.next();
             let value = item.value;
             let done = item.done;
+
+            if (value == home)
+                continue;
 
             targets.add(value);
             startingPoint.add(value);
@@ -1152,4 +1039,175 @@ function findTargets(ns, startingPoints, myRealms)
     }
 
     return targets;
+}
+
+
+
+
+/**
+ * Used to track ongoing operaitons
+ */
+class FieldWork
+{
+    /**
+     * @param {Number} timestamp
+     * @param {Number} agentCount
+     */
+    constructor(target, timestamp, agentCount)
+    {
+        this.target = target;
+        this.timestamp = timestamp;
+        this.agentCount = agentCount;
+    }
+
+    /** @returns {Number} */
+    getTimestamp() { return this.timestamp; }
+
+    /** @returns {String} */
+    getTarget() { return this.target }
+}
+
+
+/**
+ * Responsible for tracking the number of available agents in a homeworld.
+ * Also tracks available agents, agents in the field, and when deployed 
+ * agents will be available for a new assignment.
+ */
+class Agency
+{
+    /**
+     * @param {NS} ns
+     * @param {String} homeworld
+     * @param {Number} capacity
+     * @param {Number} agentCost
+     */
+    constructor(ns, homeworld, capacity, agentCost)
+    {
+        this.ns = ns;
+        this.homeworld = homeworld;
+
+        // Deprecated
+        this.capacity = capacity;
+
+        // Deprecated
+        this.availableAgents = capacity;
+        this.agentCost = agentCost;
+        this.ongoingOperations = new Array();
+        this.operationCount = 0;
+    }
+
+    /** @returns {String} */
+    getHomeworld() { return this.homeworld; }
+
+
+    /**
+     * @param {Number} agentCost
+     * @returns {Number}
+     */
+    getAvailableAgents()
+    {
+        let maxRam = this.ns.getServerMaxRam(this.homeworld);
+        let usedRam = this.ns.getServerUsedRam(this.homeworld);
+
+        let availableRam = maxRam - usedRam;
+        let availableAgentCount = Math.floor(availableRam / this.agentCost);
+
+        this.availableAgents = availableAgentCount;
+        // this.ns.tprint("Agency: Number of agents: " + this.availableAgents);
+
+        return this.availableAgents;
+    }
+
+    /** @returns {Array<String>} */
+    getActiveTargetList()
+    {
+        let timestamp = this.ns.getTimeSinceLastAug();
+
+        this.ongoingOperations = this.ongoingOperations.filter(filterOngoingAssignments, timestamp);
+        
+        let activeTargets = this.ongoingOperations.map(mapOperationNames);
+        return activeTargets;
+    }
+
+    // refreshAgentCount()
+    // {
+    //     let timestamp = this.ns.getTimeSinceLastAug();
+
+    //     // Using new available agent logic
+    //     this.getAvailableAgentsByCost();
+
+    //     // OLD LOGIC: Welcome back the returning agents.
+    //     // let returningAgents = this.ongoingOperations.filter(filterCompletedAssignments, timestamp);
+    //     // for (var i = 0; i < returningAgents.length; i++)
+    //     //     this.availableAgents = this.availableAgents + returningAgents[i].agentCount;
+
+    //     // Update ongoing ops data
+    //     this.ongoingOperations = this.ongoingOperations.filter(filterOngoingAssignments, timestamp);
+    // }
+
+    /**
+     * @param {String} scriptName
+     * @param {String} target
+     * @param {Number} numberOfAgents
+     * @param {Number} completionTime
+     * @param {Number} agentCost
+     * 
+     * @return {Number} committedAgents
+     */
+    deployAgents(scriptName, target, numberOfAgents, completionTime, globalOperationCount, runtimeReport)
+    {
+        this.operationCount = this.operationCount + 1;
+        this.ns.print(this.ns.sprintf("\n\tHomeworld: %s\n\tCommence Operation #%d\n\tScript: %s\n\tTarget: %s\n\tNumber of Agents: %d\n\tCompletion Time: %d", this.homeworld, this.operationCount, scriptName, target, numberOfAgents, completionTime));
+
+        // Add an extra 50ms to avoid potential timing issues
+        completionTime = completionTime + 50;
+
+        // Update available agent count
+        this.getAvailableAgents();
+
+        // Update available agents
+        let actualNumberOfAgentsDeployed = null;
+        if (this.availableAgents < numberOfAgents)
+        {
+            this.ns.print(this.ns.sprintf("Will only deploy %d of %d agents.", this.availableAgents, numberOfAgents));
+            actualNumberOfAgentsDeployed = this.availableAgents;
+        }
+        else
+            actualNumberOfAgentsDeployed = numberOfAgents;
+
+        let operationCountReportLocal = this.ns.sprintf("%s Operation ID: %d", this.homeworld, this.operationCount);
+        let operationCountGlobal = this.ns.sprintf("Global Operation ID: %d", globalOperationCount);
+        let result = this.ns.exec(scriptName, this.homeworld, actualNumberOfAgentsDeployed, target, actualNumberOfAgentsDeployed, runtimeReport, operationCountReportLocal, operationCountGlobal);
+        if (result != 0)
+        {
+            // Track newly deployed agents
+            let fieldWork = new FieldWork(target, completionTime, actualNumberOfAgentsDeployed);
+            this.ongoingOperations.push(fieldWork); 
+        }
+        else
+        {
+            this.ns.print(this.ns.sprintf("Failed to launch the operation %d", this.operationCount));
+            return -1;
+        }
+
+        return actualNumberOfAgentsDeployed;
+    }
+}
+
+/** @param {FieldWork} fieldWork */
+function mapOperationNames(fieldWork)
+{
+    return fieldWork.target;
+}
+
+/** @param {FieldWork} fieldWork */
+function filterCompletedAssignments(fieldWork)
+{
+    return fieldWork.timestamp <= this;
+}
+
+/** @param {FieldWork} fieldWork */
+function filterOngoingAssignments(fieldWork)
+{
+    return fieldWork.timestamp > this;
 }

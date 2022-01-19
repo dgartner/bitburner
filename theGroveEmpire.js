@@ -1,7 +1,7 @@
 const home = "home";
-const HACKER_SCRIPT = "/v2/hack.js";
-const WEAKEN_SCRIPT = "/v2/weaken.js";
-const GROW_SCRIPT = "/v2/grow.js";
+const HACKER_SCRIPT = "hack.js";
+const WEAKEN_SCRIPT = "weaken.js";
+const GROW_SCRIPT = "grow.js";
 
 const EXE_BRUTE_SSH = "BruteSSH.exe";
 const EXE_FTP_CRACK = "FTPCrack.exe";
@@ -51,8 +51,8 @@ export async function main(ns)
         let capacity = Math.floor(maxRam / AGENT_COST);
 
         // Save some room in home
-        if (homeworld == home)
-            capacity = capacity - 100;
+        //if (homeworld == home)
+          //  capacity = capacity - 100;
 
         let agency = new Agency(ns, homeworld, capacity, AGENT_COST);
         agencies.push(agency);
@@ -300,7 +300,7 @@ function prioritizeTargets(ns, targetList)
     // ns.print("Targets with Money: " + servers.length);
 
     // TODO Better sort, really now
-    servers.sort(sortServerByMaxMoney);
+    servers.sort(sortServerByMaxMoneyOverHackRequired);
     
     return servers;
 }
@@ -437,6 +437,11 @@ function filterServersWithoutMoney(server)
 function sortServerByMaxMoney(left, right)
 {
     return right.maxMoney - left.maxMoney;
+}
+
+function sortServerByMaxMoneyOverHackRequired(left, right)
+{
+    return (right.maxMoney/right.requiredHackingSkill) - (left.maxMoney/left.requiredHackingSkill);
 }
 
 async function buildHomeworlInfrastructure(ns, homeworld)
@@ -1129,8 +1134,8 @@ class Agency
 
         this.availableAgents = availableAgentCount;
 
-        if (this.homeworld == home)
-            this.availableAgents = this.availableAgents - 50;
+        // if (this.homeworld == home)
+        //     this.availableAgents = this.availableAgents - 50;
 
         return this.availableAgents;
     }

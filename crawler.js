@@ -84,6 +84,7 @@ export class Crawler {
 			if(server.moneyMax > 0)
 			{
 				let hackThreshold = Math.max(this.ns.getPlayer().hacking * 0.25, 50);
+				if(server.hostname == "n00dles") continue;
 				if(server.requiredHackingSkill < hackThreshold)
 				{
 					tempservers.push(server.hostname);

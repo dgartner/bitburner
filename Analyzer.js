@@ -9,6 +9,8 @@ export class Analyzer
         this.homeServer = ns.getHostname();
         this.cores = this.ns.getServer(this.homeServer).cpuCores;
         this.pid = 0;
+        
+	    this.ns.disableLog("ALL");
     }
 
     isSaturated(server)
@@ -30,13 +32,15 @@ export class Analyzer
         let scriptName = "weaken.js";
         let endTime = this.ns.getWeakenTime(server) + this.ns.getTimeSinceLastAug();
         let threads = this.getWeakenThreads(server);
+        let secDelta = this.getSecLevelAtTime(server, endTime) - this.ns.getServerMinSecurityLevel(server);
         //this.ns.tprintf("  Ideal threads = %d", threads);
         threads = Math.min(this.getMaxThreads(scriptName), threads);
         let secEffect = 0 - this.ns.weakenAnalyze(threads, this.cores);
         let moneyMultiplier = 1;
         if(threads > 0)
         {
-            this.ns.print(this.ns.sprintf("Spawning %d %s threads on %s", threads, scriptName, server));
+            this.ns.tprint(this.ns.sprintf("Spawning %d %s threads on %s", threads, scriptName, server));
+            //this.ns.tprint(this.ns.sprintf("SecDelta: %0.2f -> %0.2f", secDelta, secDelta - secEffect));
             this.ns.exec(scriptName, this.homeServer, threads, server, this.pid++);
             this.tm.push(new Task(server, scriptName, secEffect, moneyMultiplier, endTime, threads));
         }
@@ -55,9 +59,12 @@ export class Analyzer
             growthPercent ++;
         }
         let moneyMultiplier = 1 + (growthPercent/100); //use HackingFormulas.growPercent(server, threads, ns.getPlayer(), this.cores);
+        let moneyBefore = this.getMoneyPercentAtTime(server, endTime)*100;
+        let moneyAfter = this.getMoneyPercentAtTime(server, endTime)*100*moneyMultiplier;
         if(threads > 0)
         {
-            this.ns.print(this.ns.sprintf("Spawning %d %s threads on %s", threads, scriptName, server));
+            this.ns.tprint(this.ns.sprintf("Spawning %d %s threads on %s", threads, scriptName, server));
+            //this.ns.tprint(this.ns.sprintf("Money: %3.2f%% -> %3.2f%%", moneyBefore, moneyAfter));
             this.ns.exec(scriptName, this.homeServer, threads, server, this.pid++);
             this.tm.push(new Task(server, scriptName, secEffect, moneyMultiplier, endTime, threads));
         }
@@ -71,9 +78,12 @@ export class Analyzer
         threads = Math.min(this.getMaxThreads(scriptName), threads);
         let secEffect = this.ns.hackAnalyzeSecurity(threads);
         let moneyMultiplier = this.ns.hackAnalyze(server) * threads * this.ns.hackAnalyzeChance(server);
+        let moneyBefore = this.getMoneyPercentAtTime(server, endTime)*100;
+        let moneyAfter = this.getMoneyPercentAtTime(server, endTime)*100*moneyMultiplier;
         if(threads > 0)
         {
-            this.ns.print(this.ns.sprintf("Spawning %d %s threads on %s", threads, scriptName, server));
+            this.ns.tprint(this.ns.sprintf("Spawning %d %s threads on %s", threads, scriptName, server));
+            //this.ns.tprint(this.ns.sprintf("Money: %3.2f%% -> %3.2f%%", moneyBefore, moneyAfter));
             this.ns.exec(scriptName, this.homeServer, threads, server, this.pid++);
             this.tm.push(new Task(server, scriptName, secEffect, moneyMultiplier, endTime, threads));
         }
@@ -94,14 +104,21 @@ export class Analyzer
     {
         let endTime = this.ns.getWeakenTime(server) + this.ns.getTimeSinceLastAug();
         let secLevel = this.getSecLevelAtTime(server, endTime);
-        let secDelta = secLevel - this.ns.getServerMinSecurityLevel(server)
+        this.ns.print(this.tm.getTasks(server));
+        let secDelta = secLevel - this.ns.getServerMinSecurityLevel(server);
         let stWeakenEffect = this.ns.weakenAnalyze(1, this.cores);
-        // this.ns.tprint("  SecLevel: " + this.ns.getServerSecurityLevel(server));
-        // this.ns.tprint("  predicted SecLevel: " + secLevel);
-        // this.ns.tprint("  SecDelta pred: " + secDelta);
-        // this.ns.tprint("  singleThread weaken: " + stWeakenEffect);
-        // this.ns.tprint("  threads: " + Math.floor(secDelta / stWeakenEffect));
-        return Math.floor(secDelta / stWeakenEffect);
+        //this.ns.tprint("  predicted SecLevel: " + secLevel);
+        //this.ns.tprint("  SecDelta pred: " + secDelta);
+        //this.ns.tprint("  singleThread weaken: " + stWeakenEffect);
+        //this.ns.tprint("  threads: " + Math.floor(secDelta / stWeakenEffect));
+        let threads = Math.floor(secDelta / stWeakenEffect);
+        if(threads > 0)
+        {
+            // this.ns.tprint("-----weaken---");
+            // this.ns.tprint("  SecDelta at endTime: " + secDelta);
+            // this.ns.tprint("  Requesting " + Math.floor(secDelta / stWeakenEffect) + " threads");
+        }
+        return threads;
     }
 
     getGrowThreads(server)
@@ -109,34 +126,49 @@ export class Analyzer
         let growThreads = 0;
         let endTime = this.ns.getGrowTime(server) + this.ns.getTimeSinceLastAug();
         let effectiveMoneyPercentage = this.getMoneyPercentAtTime(server, endTime);
+        let growthPercent = 0;
         if(effectiveMoneyPercentage < 1)
         {
-            let growthPercent = 1 / effectiveMoneyPercentage;
-            growThreads = this.ns.growthAnalyze(server, growthPercent, this.cores);
+            growthPercent = 1 / effectiveMoneyPercentage;
+            growThreads = Math.max(this.ns.growthAnalyze(server, growthPercent, this.cores), 1);
         }
-        return Math.floor(growThreads);
+        if(growThreads > 0)
+        {
+            // this.ns.tprint("-----grow-----");
+            // this.ns.tprint("  Money at endTime: " + effectiveMoneyPercentage);
+            // this.ns.tprint("  Requesting " + growThreads + " threads to grow " + growthPercent);
+        }
+        return Math.ceil(growThreads);
     }
 
     getHackThreads(server)
     {
         let serv = this.ns.getServer(server);
-        let targetHackPercentage = 0.25;
+        let targetHackPercentage = 0.05;
         let endTime = this.ns.getHackTime(server) + this.ns.getTimeSinceLastAug();
         let effectiveMoneyPercentage = this.getMoneyPercentAtTime(server, endTime);
         let hackThreads = 0;
+        let hackDollars = 0;
         if(effectiveMoneyPercentage > 0.98)
         {
-            let hackDollars = serv.moneyMax * targetHackPercentage;
+            hackDollars = serv.moneyMax * targetHackPercentage;
             hackThreads = this.ns.hackAnalyzeThreads(server, hackDollars);
         }
-        return Math.floor(hackThreads);        
+        if(hackThreads > 0)
+        {
+            // this.ns.tprint("-----hack-----");
+            // this.ns.tprint("  Money at endTime: " + effectiveMoneyPercentage);
+            // this.ns.tprint("  Requesting " + hackThreads + " threads");
+            // this.ns.tprint("  Money after hack " + (((serv.moneyMax * effectiveMoneyPercentage) - hackDollars)/serv.moneyMax));
+        }
+        return Math.ceil(hackThreads);
     }
 
     getSecLevelAtTime(server, time) 
     {
         let serv = this.ns.getServer(server);
         let secLevel = this.ns.getServerSecurityLevel(server);
-        let tasks = this.tm.getTasks();
+        let tasks = this.tm.getTasks(server);
         for(let i = 0; i < tasks.length; i++)
         {
             let task = tasks[i];
@@ -160,7 +192,7 @@ export class Analyzer
     {
         let serv = this.ns.getServer(server);
         let money = serv.moneyAvailable;
-        let tasks = this.tm.getTasks();
+        let tasks = this.tm.getTasks(server);
         for(let i = 0; i < tasks.length; i++)
         {
             let task = tasks[i];
@@ -172,16 +204,57 @@ export class Analyzer
                 }
                 if(money > serv.moneyMax)
                 {
-                    money = moneyMax;
+                    money = serv.moneyMax;
                 }
             }
         }
+        //this.ns.tprint("Server: " + server);
+        //this.ns.tprint("  Money: " + money);
+        //this.ns.tprint("  Max  : " + serv.moneyMax);
+        //this.ns.tprint("  %Full: " + (money / serv.moneyMax));
         return money / serv.moneyMax;
     }
-}
 
-function sortByEndTime(a, b)
-{
-    //this.ns.tprint("Sorting: " + a.endTime + " " + b.endTime);
-    return b.endTime - a.endTime;
+    reportAll(servers)
+    {
+        this.ns.clearLog();
+        let tasks = this.tm.getTasks();
+        this.ns.print(tasks);
+        servers.forEach(server => this.report(server));
+        tasks.forEach(task => this.ns.print(task))
+    }
+
+    report(server)
+    {
+        let tasks = this.tm.getTasks(server);
+        //tasks.forEach(task => this.ns.print(task));
+        let wt = 0;
+        let gt = 0;
+        let ht = 0;
+        let minSecurity = this.ns.getServerMinSecurityLevel(server);
+        let currentSecurity = this.ns.getServerSecurityLevel(server);
+        let securityDelta = currentSecurity - minSecurity;
+        let predictedDelta = securityDelta;
+        for(let i = 0; i < tasks.length; i++)
+        {
+            let task = tasks[i];
+            wt += task.getWeakenThreads();
+            gt += task.getGrowThreads();
+            ht += task.getHackThreads();
+            predictedDelta += task.secEffect;
+
+            //this.ns.tprintf("  TIndex: %d -- W: %d -- G: %d -- H: %d", i, wt, gt, ht);
+            
+        }
+        let currentMoney = this.ns.getServerMoneyAvailable(server) / 1000000;
+        let maxMoney = this.ns.getServerMaxMoney(server) / 1000000;
+        let percentFull = (currentMoney / maxMoney) * 100;
+
+        this.ns.print(server);
+        this.ns.print(
+            this.ns.sprintf("  W: %d -- G: %d -- H: %d", wt, gt, ht) + 
+            this.ns.sprintf(":: Money: %.2f mil / %.2f mil -- %3.2f%%", currentMoney, maxMoney, percentFull) +
+            this.ns.sprintf(":: Sec: %02.2f -- Pred: %02.2f", securityDelta, predictedDelta)
+            );
+    }
 }

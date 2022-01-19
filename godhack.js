@@ -8,9 +8,10 @@ export async function main(ns) {
     let tm = new TaskManager(ns);
     let analyzer = new Analyzer(ns, tm);
     await crawler.nukeAll();
-    await crawler.infestAll();
+    //await crawler.infestAll();
 
     let servers = crawler.getHackworthyServers();
+    ns.tprint(servers);
 
     //TODO sort servers somehow.
 
@@ -25,11 +26,15 @@ export async function main(ns) {
                 //ns.tprint(server + " is saturated");
                 continue;
             }
+            //await ns.sleep(5000);
             analyzer.weaken(server);
+            //await ns.sleep(5000);
             analyzer.grow(server);
+            //await ns.sleep(5000);
             analyzer.hack(server);
             break;
         }
-        await ns.sleep(5);
+        analyzer.reportAll(servers);
+        await ns.sleep(1000);
     }
 }

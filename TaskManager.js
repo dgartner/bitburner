@@ -9,18 +9,17 @@ export class TaskManager
     push(task)
     {
         //this.ns.tprint(task);
-        //this.ns.tprint("Pushing Task");
+        //this.ns.tprint("Pushing Task" + task);
         this.myTasks.push(task);
-        this.ns.tprint("All logged tasks");
-        this.ns.tprint(this.ns.getTimeSinceLastAug());
-        this.ns.tprint(this.myTasks);
-        this.ns.tprint("-------------------------");
+        //this.ns.tprint(this.myTasks);
     }
 
-    getTasks()
+    getAllTasks()
     {
         ////this.ns.tprint("Sorting tasklist: " + this.tasklist);
         //this.tasklist = this.tasklist.sort(sortByEndTime);
+        //this.ns.tprint("Check for tasks to remove " + this.myTasks.length);
+        this.myTasks.sort(sortByEndTime);
         for(var i = 0; i < this.myTasks.length; i++)
         {
             let task = this.myTasks[i];
@@ -35,4 +34,24 @@ export class TaskManager
         }
         return this.myTasks;
     }
+
+    getTasks(server)
+    {
+        let templist = [];
+        let tasks = this.getAllTasks();
+        for(let i = 0; i < this.myTasks.length; i++)
+        {
+            if(this.myTasks[i].serverName == server)
+            {
+                templist.push(this.myTasks[i]);
+            }
+        }
+        return templist;
+    }
+}
+
+function sortByEndTime(a, b)
+{
+    //this.ns.tprint("Sorting: " + a.endTime + " " + b.endTime);
+    return a.endTime - b.endTime;
 }

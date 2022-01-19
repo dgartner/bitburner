@@ -7,7 +7,7 @@ const EXE_BRUTE_SSH = "BruteSSH.exe";
 const EXE_FTP_CRACK = "FTPCrack.exe";
 const EXE_HTTP_HACK = "HTTPWorm.exe";
 const EXE_SMTP_HACK = "relaySMTP.exe";
-const EXE_SQL_HACK = "undefined";
+const EXE_SQL_HACK = "SQLInject.exe";
 
 const AGENT_READY = "ready";
 const AGENT_HACK = "hacking";
@@ -52,7 +52,7 @@ export async function main(ns)
 
         // Save some room in home
         if (homeworld == home)
-            capacity = capacity - 50;
+            capacity = capacity - 100;
 
         let agency = new Agency(ns, homeworld, capacity, AGENT_COST);
         agencies.push(agency);
@@ -81,24 +81,22 @@ export async function main(ns)
         let hasAdminRights = serverData.hasAdminRights;
 
         let isHackable = serverData.isHackable;
-        if ( hasAdminRights && isHackable)
+        if (hasAdminRights && isHackable)
         {
             let homeworld = serverData.getHostname();
 
-            // Really shouldn't be needed here...
-            if (homeworld == home)
+            if (myRealms.includes(homeworld))
                 continue;
 
             let maxRam = ns.getServerMaxRam(homeworld);
             let capacity = Math.floor(maxRam / AGENT_COST);
 
-            let agency = new Agency(ns, homeworld, capacity);
+            let agency = new Agency(ns, homeworld, capacity, AGENT_COST);
             ns.print(ns.sprintf("Adding %s to my agencies", JSON.stringify(agency)));
 
             agencies.push(agency);
         }
     }
-
 
     for (var i = 0; i < agencies.length; i++)
     {
@@ -106,6 +104,10 @@ export async function main(ns)
         await buildInfrastructure(ns, homeworld);
     }
     
+    ns.disableLog("getServerMaxRam");
+    ns.disableLog("getServerUsedRam");
+    ns.disableLog("sleep");
+    // ns.disableLog("prioritizeTargets");
 
     ns.print("Main loop");
     await mainLoop(ns, serverDataList, agencies, myRealms);
@@ -215,10 +217,12 @@ async function mainLoop(ns, targetList, agencies, myRealms)
         // Another safety check I'm hacking in...
         if (currentOperation == null)
             continue;
-
+ 
         let agentsRequiredForOps = currentOperation.getAgentsRequired();
         if (agentsRequiredForOps == null || isNaN(agentsRequiredForOps) || agentsRequiredForOps == 0)
 
+        ns.print("Operation Target: " + currentOperation.getTarget());
+        ns.print("Operation script: " + currentOperation.getActionScript());
         ns.print("Agents required: " + agentsRequiredForOps);
         
         // Work an op to completion
@@ -227,8 +231,10 @@ async function mainLoop(ns, targetList, agencies, myRealms)
             for (var i = 0; i < agencies.length; i++)
             {
                 let agency = agencies[i];
+                // ns.tprint("Agency: " + agency.getHomeworld());
 
                 let availableAgents = agency.getAvailableAgents();
+                // ns.tprint("Available agents: " + availableAgents);
 
                 // ns.tprint("Main loop agent count: " + availableAgents);
                 // ns.tprint(ns.sprintf("\n\tAgency: %s\n\tAvailable Agents: %d", agency.getHomeworld(), availableAgents));
@@ -247,7 +253,7 @@ async function mainLoop(ns, targetList, agencies, myRealms)
 
                 let operationCompletion = operationDuration + ns.getTimeSinceLastAug();
 
-                ns.print(ns.sprintf("\nAgent Homeworld: %s\nScript Name: %s\nTarget: %s\nAgent Count: %d\nDuration: %d\nCompletion: %d", agency.getHomeworld(), scriptName, target, availableAgents, operationDuration, operationCompletion));
+                // ns.print(ns.sprintf("\nAgent Homeworld: %s\nScript Name: %s\nTarget: %s\nAgent Count: %d\nDuration: %d\nCompletion: %d", agency.getHomeworld(), scriptName, target, availableAgents, operationDuration, operationCompletion));
                 
 
                 let operationDurationSeconds = (operationDuration / 1000) % 60;
@@ -288,10 +294,10 @@ async function mainLoop(ns, targetList, agencies, myRealms)
  */
 function prioritizeTargets(ns, targetList)
 {
-    ns.print("Target Count: " + targetList.length);
+    // ns.print("Target Count: " + targetList.length);
     let servers = targetList.filter(filterServersWithoutMoney);
 
-    ns.print("Targets with Money: " + servers.length);
+    // ns.print("Targets with Money: " + servers.length);
 
     // TODO Better sort, really now
     servers.sort(sortServerByMaxMoney);
@@ -814,28 +820,28 @@ function runServerAnalysis(ns, serverNameList, myRealms)
 {
     let serverDataList = new Array();
 
-    ns.print("Server analysis...");
+    // ns.print("Server analysis...");
     for (var i = 0; i < serverNameList.length; i++)
     {
         let serverName = serverNameList[i];
-        ns.print("\tServer Name: " + serverName);
+        // ns.print("\tServer Name: " + serverName);
 
         if (myRealms.includes(serverName))
         {
-            ns.print("\t\tServer is mine, skipping analysis");
+            // ns.print("\t\tServer is mine, skipping analysis");
             continue;
         }
         else
         {
             let server = ns.getServer(serverName);
 
-            ns.print("\t\tRunning server prep");
+            // ns.print("\t\tRunning server prep");
             let updateNeeded = portCheck(ns, "\t\t\t", server);
 
             if(updateNeeded)
                 server = ns.getServer(serverName);
 
-            ns.print("\t\tServer Stats");
+            // ns.print("\t\tServer Stats");
             let serverData = runAnalysis(ns, "\t\t\t", server);
 
             serverDataList.push(serverData);
@@ -851,25 +857,25 @@ function runServerAnalysis(ns, serverNameList, myRealms)
 function runAnalysis(ns, logPrefix, server)
 {
     let isHackable = server.openPortCount >= server.openPortCount;
-    ns.print(logPrefix + "Is Hackable: " + isHackable);
+    // ns.print(logPrefix + "Is Hackable: " + isHackable);
 
     let hasAdminRights = server.hasAdminRights;
-    ns.print(logPrefix + "Has Admin Rights: " + hasAdminRights);
+    // ns.print(logPrefix + "Has Admin Rights: " + hasAdminRights);
 
     let maxMoney = server.moneyMax;
-    ns.print(logPrefix + "Max Money: " + maxMoney);
+    // ns.print(logPrefix + "Max Money: " + maxMoney);
 
     let currentMoney = server.moneyAvailable;
-    ns.print(logPrefix + "Current Money: " + currentMoney);
+    // ns.print(logPrefix + "Current Money: " + currentMoney);
 
     let minSecurity = server.minDifficulty;
-    ns.print(logPrefix + "Min Security: " + minSecurity);
+    // ns.print(logPrefix + "Min Security: " + minSecurity);
 
     let currentSecurity = server.hackDifficulty;
-    ns.print(logPrefix + "Current Security: " + currentSecurity);
+    // ns.print(logPrefix + "Current Security: " + currentSecurity);
 
     let numberOfCores = server.cpuCores;
-    ns.print(logPrefix + "Number of cores: " + numberOfCores);
+    // ns.print(logPrefix + "Number of cores: " + numberOfCores);
 
     let serverData = new ServerData(server.hostname, isHackable, hasAdminRights, maxMoney, currentMoney, minSecurity, currentSecurity, numberOfCores);
     return serverData;
@@ -1093,11 +1099,14 @@ class Agency
         this.ns = ns;
         this.homeworld = homeworld;
 
-        // Deprecated
-        this.capacity = capacity;
+        let maxRam = this.ns.getServerMaxRam(this.homeworld);
+        let usedRam = this.ns.getServerUsedRam(this.homeworld);
 
-        // Deprecated
-        this.availableAgents = capacity;
+        let availableRam = maxRam - usedRam;
+        let availableAgentCount = Math.floor(availableRam / agentCost);
+
+        this.availableAgents = availableAgentCount;
+
         this.agentCost = agentCost;
         this.ongoingOperations = new Array();
         this.operationCount = 0;
@@ -1105,7 +1114,6 @@ class Agency
 
     /** @returns {String} */
     getHomeworld() { return this.homeworld; }
-
 
     /**
      * @param {Number} agentCost
@@ -1120,6 +1128,9 @@ class Agency
         let availableAgentCount = Math.floor(availableRam / this.agentCost);
 
         this.availableAgents = availableAgentCount;
+
+        if (this.homeworld == home)
+            this.availableAgents = this.availableAgents - 50;
 
         return this.availableAgents;
     }

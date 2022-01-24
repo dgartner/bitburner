@@ -4,12 +4,15 @@
  export class FieldWork
  {
      /**
+      * @param {string} target
+      * @param {string} host
       * @param {Number} timestamp
       * @param {Number} agentCount
       */
-     constructor(target, timestamp, agentCount)
+     constructor(target, host, timestamp, agentCount)
      {
          this.target = target;
+         this.host = host;
          this.timestamp = timestamp;
          this.agentCount = agentCount;
      }
